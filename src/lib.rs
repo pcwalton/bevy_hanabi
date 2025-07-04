@@ -1,5 +1,4 @@
 #![deny(
-    warnings,
     missing_copy_implementations,
     trivial_casts,
     trivial_numeric_casts,
