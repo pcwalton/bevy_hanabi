@@ -167,7 +167,10 @@ impl Property {
 
 impl ToWgslString for Property {
     fn to_wgsl_string(&self) -> String {
-        format!("properties.{}", self.name)
+        format!(
+            "properties[effect_metadata[effect_metadata_index].properties_index].{}",
+            self.name
+        )
     }
 }
 
@@ -902,7 +905,7 @@ mod tests {
         assert_eq!(*p.default_value(), value);
         assert_eq!(p.value_type(), value.value_type());
         assert_eq!(p.size(), value.value_type().size());
-        assert_eq!(p.to_wgsl_string(), format!("properties.{}", p.name()));
+        assert_eq!(p.to_wgsl_string(), format!("properties[effect_metadata[effect_metadata_index].properties_index].{}", p.name()));
     }
 
     #[test]

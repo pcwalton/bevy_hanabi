@@ -66,14 +66,16 @@ struct EventBuffer {
 
 /// Info about a single child of a parent effect.
 struct ChildInfo {
-    /// Index of the effect's IndirectDispatch entry in the global init indirect dispatch array.
-    init_indirect_dispatch_index: u32,
     /// Number of events in the associated event buffer.
 #ifdef CHILD_INFO_EVENT_COUNT_IS_ATOMIC
     event_count: atomic<i32>,
 #else
     event_count: i32,
 #endif
+    // Index of the first spawn event in the `spawn_events` buffer.
+    spawn_event_offset: u32,
+    // Size of the `spawn_events` buffer.
+    spawn_event_capacity: u32,
 }
 
 /// Buffer storing all the ChildInfo structs for several effects.
@@ -108,7 +110,6 @@ const EM_OFFSET_MAX_UPDATE: u32 = 6u;
 const EM_OFFSET_DEAD_COUNT: u32 = 7u;
 const EM_OFFSET_MAX_SPAWN: u32 = 8u;
 const EM_OFFSET_PING: u32 = 9u;
-const EM_OFFSET_INDIRECT_DISPATCH_INDEX: u32 = 10u;
 
 /// Draw indirect parameters for GPU-driven rendering, and additional effect data.
 struct EffectMetadata {
@@ -144,16 +145,11 @@ struct EffectMetadata {
     /// always write into the ping buffer and read from the pong buffer. The buffers
     /// are swapped (ping = 1 - ping) during the indirect dispatch.
     ping: u32,
-    /// Index of the [`GpuDispatchIndirect`] struct inside the global
-    /// [`EffectsMeta::dispatch_indirect_buffer`].
-    indirect_dispatch_index: u32,
     /// Index of the [`GpuRenderIndirect`] struct inside the global
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     indirect_render_index: u32,
-    /// Offset (in u32 count) of the init indirect dispatch struct inside its
-    /// buffer. This avoids having to align those 16-byte structs to the GPU
-    /// alignment (at least 32 bytes, even 256 bytes on some).
-    init_indirect_dispatch_index: u32,
+    sort_metadata_index: u32,
+    properties_index: u32,
     /// Index of this effect into its parent's ChildInfo array
     /// ([`EffectChildren::effect_cache_ids`] and its associated GPU
     /// array). This starts at zero for the first child of each effect, and is
@@ -181,12 +177,55 @@ struct EffectMetadata {
     /// Index of the spawner associated with this effect in the spawner buffer.
     spawner_index: u32,
 
+    mesh_is_indexed: u32,
+
     /// Padding for storage buffer alignment. This struct is sometimes bound as part
     /// of an array, or sometimes individually as a single unit. In the later case,
     /// we need it to be aligned to the GPU limits of the device. That limit is only
     /// known at runtime when initializing the WebGPU device.
-    // FIXME - not anymore, but would be again with proper batching, so keep for now
     {{EFFECT_METADATA_PADDING}}
+}
+
+struct BatchMetadata {
+    total_batch_count: u32,
+    total_render_batches_requiring_sorting_count: u32,
+    total_render_batches_with_events_count: u32,
+}
+
+struct BatchDescriptor {
+    first_batch_effect_index_offset: u32,
+    last_batch_effect_index_offset: u32,
+    indirect_draw_command_offset: u32,
+    init_indirect_dispatch_index: u32,
+    /// 1 if the mesh is indexed or 0 if it isn't.
+    mesh_is_indexed: u32,
+
+    {{BATCH_DESCRIPTOR_PADDING}}
+}
+
+struct IndexedIndirectDrawCommand {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: u32,
+    base_instance: u32,
+}
+
+struct NonIndexedIndirectDrawCommand {
+    vertex_count: u32,
+    instance_count: u32,
+    vertex_offset: u32,
+    base_instance: u32,
+}
+
+// NB: Keep in sync with `EffectSortMetadataAtomic` in `vfx_sort_fill`.
+struct EffectSortMetadata {
+    first_sort_buffer_index: u32,
+    last_sort_buffer_index: u32,
+    // Index of the `IndirectDispatch` array in `dispatch_indirect_buffer`.
+    indirect_command_index: u32,
+
+    {{EFFECT_SORT_METADATA_PADDING}}
 }
 
 /// Stride, in u32 count, between elements of an array<EffectMetadata>.

@@ -18,8 +18,8 @@ use super::{buffer_table::BufferTableId, BufferBindingSource};
 use crate::{
     asset::EffectAsset,
     render::{
-        calc_hash, event::GpuChildInfo, GpuEffectMetadata, GpuSpawnerParams, LayoutFlags,
-        StorageType as _, INDIRECT_INDEX_SIZE,
+        calc_hash, event::GpuChildInfo, GpuEffectMetadata, GpuRenderBatchDescriptor,
+        GpuSpawnerParams, LayoutFlags, StorageType as _, INDIRECT_INDEX_SIZE,
     },
     ParticleLayout,
 };
@@ -598,17 +598,12 @@ pub(crate) struct CachedEffect {
 /// that of the metadata buffer.
 #[derive(Debug, Default, Clone, Copy, Component)]
 pub(crate) struct DispatchBufferIndices {
-    /// The index of the [`GpuDispatchIndirect`] row in the GPU buffer
-    /// [`EffectsMeta::update_dispatch_indirect_buffer`].
-    ///
-    /// [`EffectsMeta::update_dispatch_indirect_buffer`]: super::EffectsMeta::update_dispatch_indirect_buffer
-    pub(crate) update_dispatch_indirect_buffer_row_index: u32,
-
     /// The index of the [`GpuEffectMetadata`] in
     /// [`EffectsMeta::effect_metadata_buffer`].
     ///
     /// [`EffectsMeta::effect_metadata_buffer`]: super::EffectsMeta::effect_metadata_buffer
     pub(crate) effect_metadata_buffer_table_id: BufferTableId,
+    pub(crate) effect_sort_metadata_index: Option<BufferTableId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1000,8 +995,9 @@ fn create_metadata_init_bind_group_layout(
 ) -> BindGroupLayout {
     let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
     let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
+    let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
-    let mut entries = Vec::with_capacity(3);
+    let mut entries = Vec::with_capacity(5);
 
     // @group(3) @binding(0) var<storage, read_write> effect_metadata :
     // EffectMetadata;
@@ -1018,10 +1014,36 @@ fn create_metadata_init_bind_group_layout(
         count: None,
     });
 
+    // @group(3) @binding(1) var<storage, read> batch_descriptor :
+    // BatchDescriptor;
+    entries.push(BindGroupLayoutEntry {
+        binding: 1,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: true,
+            min_binding_size: Some(batch_descriptor_size),
+        },
+        count: None,
+    });
+
+    // @group(2) @binding(2) var<storage, read> batch_effect_indices :
+    // array<u32>;
+    entries.push(BindGroupLayoutEntry {
+        binding: 2,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: Some(u32::min_size()),
+        },
+        count: None,
+    });
+
     if consume_gpu_spawn_events {
-        // @group(3) @binding(1) var<storage, read> child_info_buffer : ChildInfoBuffer;
+        // @group(3) @binding(3) var<storage, read> child_info_buffer : ChildInfoBuffer;
         entries.push(BindGroupLayoutEntry {
-            binding: 1,
+            binding: 3,
             visibility: ShaderStages::COMPUTE,
             ty: BindingType::Buffer {
                 ty: BufferBindingType::Storage { read_only: true },
@@ -1031,9 +1053,9 @@ fn create_metadata_init_bind_group_layout(
             count: None,
         });
 
-        // @group(3) @binding(2) var<storage, read> event_buffer : EventBuffer;
+        // @group(3) @binding(4) var<storage, read> event_buffer : EventBuffer;
         entries.push(BindGroupLayoutEntry {
-            binding: 2,
+            binding: 4,
             visibility: ShaderStages::COMPUTE,
             ty: BindingType::Buffer {
                 ty: BufferBindingType::Storage { read_only: true },
@@ -1071,13 +1093,38 @@ fn create_metadata_update_bind_group_layout(
 ) -> BindGroupLayout {
     let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
     let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
+    let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
-    let mut entries = Vec::with_capacity(num_event_buffers as usize + 2);
+    let mut entries = Vec::with_capacity(num_event_buffers as usize + 4);
 
-    // @group(3) @binding(0) var<storage, read_write> effect_metadata :
-    // EffectMetadata;
+    // @group(0) @binding(0) var<storage, read> batch_descriptor :
+    // BatchDescriptor;
     entries.push(BindGroupLayoutEntry {
         binding: 0,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: true,
+            min_binding_size: Some(batch_descriptor_size),
+        },
+        count: None,
+    });
+    // @group(0) @binding(1) var<storage, read> batch_effect_indices :
+    // array<u32>;
+    entries.push(BindGroupLayoutEntry {
+        binding: 1,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: Some(u32::min_size()),
+        },
+        count: None,
+    });
+    // @group(0) @binding(2) var<storage, read_write> effect_metadata :
+    // array<EffectMetadata>;
+    entries.push(BindGroupLayoutEntry {
+        binding: 2,
         visibility: ShaderStages::COMPUTE,
         ty: BindingType::Buffer {
             ty: BufferBindingType::Storage { read_only: false },
@@ -1090,10 +1137,10 @@ fn create_metadata_update_bind_group_layout(
     });
 
     if num_event_buffers > 0 {
-        // @group(3) @binding(1) var<storage, read_write> child_infos : array<ChildInfo,
+        // @group(3) @binding(3) var<storage, read_write> child_infos : array<ChildInfo,
         // N>;
         entries.push(BindGroupLayoutEntry {
-            binding: 1,
+            binding: 3,
             visibility: ShaderStages::COMPUTE,
             ty: BindingType::Buffer {
                 ty: BufferBindingType::Storage { read_only: false },
@@ -1104,15 +1151,15 @@ fn create_metadata_update_bind_group_layout(
         });
 
         for i in 0..num_event_buffers {
-            // @group(3) @binding(2+i) var<storage, read_write> event_buffer_#i :
+            // @group(3) @binding(4+i) var<storage, read_write> event_buffer_#i :
             // EventBuffer;
             entries.push(BindGroupLayoutEntry {
-                binding: 2 + i,
+                binding: 4 + i,
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(4).unwrap()),
+                    min_binding_size: None,
                 },
                 count: None,
             });
@@ -1135,25 +1182,51 @@ fn create_metadata_update_bind_group_layout(
 fn create_metadata_render_bind_group_layout(render_device: &RenderDevice) -> BindGroupLayout {
     let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
     let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
-
-    // @group(2) @binding(0) var<storage, read> effect_metadata :
-    // EffectMetadata;
+    let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
     trace!("Creating particle bind group layout for render.",);
     render_device.create_bind_group_layout(
         "hanabi:bind_group_layout:render",
-        &[BindGroupLayoutEntry {
-            binding: 0,
-            visibility: ShaderStages::VERTEX,
-            ty: BindingType::Buffer {
-                ty: BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                // This WGSL struct is manually padded, so the Rust type GpuEffectMetadata doesn't
-                // reflect its true min size.
-                min_binding_size: Some(effect_metadata_size),
+        &[
+            // @group(2) @binding(0) var<storage, read_write> effect_metadata :
+            // EffectMetadata;
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    // This WGSL struct is manually padded, so the Rust type GpuEffectMetadata doesn't
+                    // reflect its true min size.
+                    min_binding_size: Some(effect_metadata_size),
+                },
+                count: None,
             },
-            count: None,
-        }],
+            // @group(2) @binding(1) var<storage, read> batch_descriptor :
+            // BatchDescriptor;
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: true,
+                    min_binding_size: Some(batch_descriptor_size),
+                },
+                count: None,
+            },
+            // @group(2) @binding(2) var<storage, read> batch_effect_indices :
+            // array<u32>;
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(u32::min_size()),
+                },
+                count: None,
+            },
+        ],
     )
 }
 
@@ -1431,8 +1504,6 @@ mod gpu_tests {
 
         // Remove the first effect instance
         let buffer_state = effect_cache.remove(&effect1).unwrap();
-        // Note: currently batching is disabled, so each instance has its own buffer,
-        // which becomes unused once the instance is destroyed.
         assert_eq!(buffer_state, BufferState::Free);
         assert_eq!(effect_cache.buffers().len(), 2);
         {
@@ -1451,7 +1522,6 @@ mod gpu_tests {
             item_size
         );
         assert_eq!(slice3.range, 0..capacity);
-        // Note: currently batching is disabled, so each instance has its own buffer.
         assert_eq!(effect_cache.buffers().len(), 2);
         {
             let buffers = effect_cache.buffers();

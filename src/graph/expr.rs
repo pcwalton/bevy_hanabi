@@ -1319,7 +1319,10 @@ impl PropertyExpr {
             )));
         }
 
-        Ok(format!("properties.{}", prop.name()))
+        Ok(format!(
+            "properties[effect_metadata[effect_metadata_index].properties_index].{}",
+            prop.name()
+        ))
     }
 }
 
@@ -4046,7 +4049,7 @@ mod tests {
         let x = m.try_get(x).unwrap();
         let s = x.eval(&m, &mut context).unwrap();
         assert_eq!(
-            "(max(abs(3.), (particle.position) * (2.))) + (min(-4., properties.my_prop))"
+            "(max(abs(3.), (particle.position) * (2.))) + (min(-4., properties[effect_metadata[effect_metadata_index].properties_index].my_prop))"
                 .to_string(),
             s
         );

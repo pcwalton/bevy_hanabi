@@ -1,4 +1,5 @@
 #![deny(
+    warnings,
     missing_copy_implementations,
     trivial_casts,
     trivial_numeric_casts,
@@ -12,7 +13,11 @@
     clippy::suspicious_operation_groupings,
     clippy::useless_let_if_seq
 )]
-#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::uninlined_format_args
+)]
 
 //! 🎆 Hanabi -- a GPU particle system plugin for the Bevy game engine.
 //!
@@ -932,35 +937,36 @@ impl EffectShaderSource {
         let properties_binding_code = if property_layout.is_empty() {
             "// (no properties)".to_string()
         } else {
-            "@group(2) @binding(1) var<storage, read> properties : Properties;".to_string()
+            "@group(2) @binding(1) var<storage, read> properties : array<Properties>;".to_string()
         };
 
         // Event buffer bindings for the update pass, if the effect emits GPU events to
         // one or more other effects.
         let mut emit_event_buffer_bindings_code = String::with_capacity(256);
         emit_event_buffer_bindings_code.push_str(
-            "@group(3) @binding(1) var<storage, read_write> child_info_buffer : ChildInfoBuffer;\n",
+            "@group(3) @binding(3) var<storage, read_write> child_info_buffer : ChildInfoBuffer;\n",
         );
         let mut emit_event_buffer_append_funcs_code = String::with_capacity(1024);
-        let base_binding_index = 2;
+        let base_binding_index = 4;
         for i in 0..num_event_bindings {
             let binding_index = base_binding_index + i;
             emit_event_buffer_bindings_code.push_str(&format!(
                 "@group(3) @binding({binding_index}) var<storage, read_write> event_buffer_{i} : EventBuffer;\n"));
             emit_event_buffer_append_funcs_code.push_str(&format!(
                 r##"/// Append one or more spawn events to the event buffer.
-fn append_spawn_events_{0}(particle_index: u32, count: u32) {{
+fn append_spawn_events_{0}(effect_metadata_index: u32, particle_index: u32, count: u32) {{
     // Optimize this case.
     if (count == 0u) {{
         return;
     }}
 
-    let base_child_index = effect_metadata.base_child_index;
-    let capacity = arrayLength(&event_buffer_{0}.spawn_events);
+    let base_child_index = effect_metadata[effect_metadata_index].base_child_index;
+    let spawn_event_offset = child_info_buffer.rows[base_child_index + {0}].spawn_event_offset;
+    let capacity = child_info_buffer.rows[base_child_index + {0}].spawn_event_capacity;
     let base = min(u32(atomicAdd(&child_info_buffer.rows[base_child_index + {0}].event_count, i32(count))), capacity);
     let capped_count = min(count, capacity - base);
     for (var i = 0u; i < capped_count; i += 1u) {{
-        event_buffer_{0}.spawn_events[base + i].particle_index = particle_index;
+        event_buffer_{0}.spawn_events[spawn_event_offset + base + i].particle_index = particle_index;
     }}
 }}
 "##,

@@ -65,7 +65,7 @@ fn spawn_effect(
     commands
         .spawn((
             transform,
-            Name::new(format!("{}_parent", name)),
+            Name::new(format!("{name}_parent")),
             Visibility::default(),
         ))
         .with_children(|p| {

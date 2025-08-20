@@ -1,7 +1,7 @@
 #import bevy_hanabi::vfx_common::{
     ChildInfo, ChildInfoBuffer, SimParams, Spawner,
     EM_OFFSET_ALIVE_COUNT, EM_OFFSET_MAX_UPDATE, EM_OFFSET_DEAD_COUNT,
-    EM_OFFSET_MAX_SPAWN, EM_OFFSET_INSTANCE_COUNT, EM_OFFSET_INDIRECT_DISPATCH_INDEX,
+    EM_OFFSET_MAX_SPAWN, EM_OFFSET_INSTANCE_COUNT,
     EM_OFFSET_PING, DISPATCH_INDIRECT_STRIDE, EFFECT_METADATA_STRIDE
 }
 
@@ -58,14 +58,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // and limit the number of particles spawned to the number of dead
     // particles to recycle.
     effect_metadata_buffer[em_base + EM_OFFSET_MAX_SPAWN] = dead_count;
-
-    // Calculate the number of workgroups (thread groups) to dispatch for the update
-    // pass, which is the number of alive particles rounded up to 64 (workgroup_size).
-    let indirect_dispatch_index = effect_metadata_buffer[em_base + EM_OFFSET_INDIRECT_DISPATCH_INDEX];
-    let di_base = DISPATCH_INDIRECT_STRIDE * indirect_dispatch_index;
-    dispatch_indirect_buffer[di_base] = (alive_count + 63u) >> 6u;
-    dispatch_indirect_buffer[di_base + 1u] = 1u;
-    dispatch_indirect_buffer[di_base + 2u] = 1u;
 
     // Swap ping/pong buffers. The update pass always writes into ping, and both the update
     // pass and the render pass always read from pong.

@@ -179,7 +179,7 @@ impl Modifier for ConformToSphereModifier {
 
         context.make_fn(
             &func_name,
-            "particle: ptr<function, Particle>",
+            "particle: ptr<function, Particle>, effect_metadata_index: u32",
             module,
             &mut |m: &mut Module, ctx: &mut dyn EvalContext| -> Result<String, ExprError> {
                 let origin = ctx.eval(m, self.origin)?;
@@ -233,7 +233,7 @@ impl Modifier for ConformToSphereModifier {
             },
         )?;
 
-        context.main_code += &format!("{}(&particle);\n", func_name);
+        context.main_code += &format!("{}(&particle, effect_metadata_index);\n", func_name);
 
         Ok(())
     }

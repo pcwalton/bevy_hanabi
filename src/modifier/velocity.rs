@@ -52,7 +52,7 @@ impl SetVelocityCircleModifier {
 
         context.make_fn(
             &func_name,
-            "transform: mat4x4<f32>, particle: ptr<function, Particle>",
+            "transform: mat4x4<f32>, particle: ptr<function, Particle>, effect_metadata_index: u32",
             module,
             &mut |m: &mut Module, ctx: &mut dyn EvalContext| -> Result<String, ExprError> {
                 let center = ctx.eval(m, self.center)?;
@@ -74,7 +74,7 @@ impl SetVelocityCircleModifier {
             },
         )?;
 
-        let code = format!("{}(transform, &particle);\n", func_name);
+        let code = format!("{}(transform, &particle, effect_metadata_index);\n", func_name);
 
         Ok(code)
     }
@@ -197,7 +197,7 @@ impl SetVelocityTangentModifier {
 
         context.make_fn(
             &func_name,
-            "transform: mat4x4<f32>, particle: ptr<function, Particle>",
+            "transform: mat4x4<f32>, particle: ptr<function, Particle>, effect_metadata_index: u32",
             module,
             &mut |m: &mut Module, ctx: &mut dyn EvalContext| -> Result<String, ExprError> {
                 let origin = ctx.eval(m, self.origin)?;
@@ -219,7 +219,7 @@ impl SetVelocityTangentModifier {
             },
         )?;
 
-        let code = format!("{}(transform, &particle);\n", func_name);
+        let code = format!("{}(transform, &particle, effect_metadata_index);\n", func_name);
 
         Ok(code)
     }

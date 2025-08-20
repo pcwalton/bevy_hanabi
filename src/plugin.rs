@@ -28,14 +28,15 @@ use crate::{
     render::{
         add_effects, batch_effects, clear_transient_batch_inputs, extract_effect_events,
         extract_effects, fixup_parents, on_remove_cached_effect, on_remove_cached_properties,
-        prepare_bind_groups, prepare_effects, prepare_gpu_resources, prepare_property_buffers,
-        queue_effects, queue_init_fill_dispatch_ops, resolve_parents, update_mesh_locations,
+        prepare_bind_groups, prepare_effects, prepare_gpu_resources, prepare_late_gpu_resources,
+        prepare_property_buffers, queue_effects, resolve_parents, update_mesh_locations,
         DebugSettings, DispatchIndirectPipeline, DrawEffects, EffectAssetEvents, EffectBindGroups,
         EffectCache, EffectsMeta, EventCache, ExtractedEffects, GpuBufferOperations,
-        GpuEffectMetadata, GpuSpawnerParams, InitFillDispatchQueue, ParticlesInitPipeline,
+        GpuEffectMetadata, GpuEffectSortMetadata, GpuRenderBatchDescriptor, GpuSpawnerParams,
+        IndirectBatchPipeline, InitIndirectBatchPipeline, ParticlesInitPipeline,
         ParticlesRenderPipeline, ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache,
-        RenderDebugSettings, ShaderCache, SimParams, SortBindGroups, SortedEffectBatches,
-        StorageType as _, UtilsPipeline, VfxSimulateDriverNode, VfxSimulateNode,
+        RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams, SortBindGroups,
+        SortedEffects, StorageType as _, VfxSimulateDriverNode, VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -145,10 +146,22 @@ impl HanabiPlugin {
             GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
         let effect_metadata_stride_code =
             (render_effect_indirect_size.get() as u32).to_wgsl_string();
+        let batch_descriptor_padding_code =
+            GpuRenderBatchDescriptor::padding_code(min_storage_buffer_offset_alignment);
+        let effect_sort_metadata_padding_code =
+            GpuEffectSortMetadata::padding_code(min_storage_buffer_offset_alignment);
         let common_code = include_str!("render/vfx_common.wgsl")
             .replace("{{SPAWNER_PADDING}}", &spawner_padding_code)
             .replace("{{EFFECT_METADATA_PADDING}}", &effect_metadata_padding_code)
-            .replace("{{EFFECT_METADATA_STRIDE}}", &effect_metadata_stride_code);
+            .replace("{{EFFECT_METADATA_STRIDE}}", &effect_metadata_stride_code)
+            .replace(
+                "{{BATCH_DESCRIPTOR_PADDING}}",
+                &batch_descriptor_padding_code,
+            )
+            .replace(
+                "{{EFFECT_SORT_METADATA_PADDING}}",
+                &effect_sort_metadata_padding_code,
+            );
         Shader::from_wgsl(
             common_code,
             std::path::Path::new(file!())
@@ -189,6 +202,50 @@ impl HanabiPlugin {
                     "render/vfx_indirect_{}_{}.wgsl",
                     min_storage_buffer_offset_alignment,
                     if has_events { "events" } else { "noevent" },
+                ))
+                .to_string_lossy(),
+        )
+    }
+
+    pub(crate) fn make_indirect_batch_shader(min_storage_buffer_offset_alignment: u32) -> Shader {
+        let render_effect_indirect_size =
+            GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
+        let render_effect_indirect_stride_code =
+            (render_effect_indirect_size.get() as u32).to_wgsl_string();
+        let indirect_code = include_str!("render/vfx_indirect_batch.wgsl").replace(
+            "{{EFFECT_METADATA_STRIDE}}",
+            &render_effect_indirect_stride_code,
+        );
+        Shader::from_wgsl(
+            indirect_code,
+            std::path::Path::new(file!())
+                .parent()
+                .unwrap()
+                .join(format!(
+                    "render/vfx_indirect_batch_{}.wgsl",
+                    min_storage_buffer_offset_alignment,
+                ))
+                .to_string_lossy(),
+        )
+    }
+
+    pub(crate) fn make_render_batch_shader(min_storage_buffer_offset_alignment: u32) -> Shader {
+        let render_effect_indirect_size =
+            GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
+        let render_effect_indirect_stride_code =
+            (render_effect_indirect_size.get() as u32).to_wgsl_string();
+        let indirect_code = include_str!("render/vfx_render_batch.wgsl").replace(
+            "{{EFFECT_METADATA_STRIDE}}",
+            &render_effect_indirect_stride_code,
+        );
+        Shader::from_wgsl(
+            indirect_code,
+            std::path::Path::new(file!())
+                .parent()
+                .unwrap()
+                .join(format!(
+                    "render/vfx_render_batch_{}.wgsl",
+                    min_storage_buffer_offset_alignment,
                 ))
                 .to_string_lossy(),
         )
@@ -270,10 +327,11 @@ impl Plugin for HanabiPlugin {
         // Insert the properly aligned `vfx_common.wgsl` shader into Assets<Shader>, so
         // that the automated Bevy shader processing finds it as an import. This is used
         // for init/update/render shaders (but not the indirect one).
+        let min_storage_buffer_offset_alignment =
+            render_device.limits().min_storage_buffer_offset_alignment;
         {
-            let common_shader = HanabiPlugin::make_common_shader(
-                render_device.limits().min_storage_buffer_offset_alignment,
-            );
+            let common_shader =
+                HanabiPlugin::make_common_shader(min_storage_buffer_offset_alignment);
             let mut assets = app.world_mut().resource_mut::<Assets<Shader>>();
             assets.insert(&HANABI_COMMON_TEMPLATE_HANDLE, common_shader);
         }
@@ -283,6 +341,10 @@ impl Plugin for HanabiPlugin {
         let (
             indirect_shader_noevent,
             indirect_shader_events,
+            indirect_batch_shader,
+            render_batch_shader,
+            init_indirect_batch_shader,
+            sort_indirect_batch_shader,
             sort_fill_shader,
             sort_shader,
             sort_copy_shader,
@@ -290,8 +352,36 @@ impl Plugin for HanabiPlugin {
             let align = render_device.limits().min_storage_buffer_offset_alignment;
             let indirect_shader_noevent = HanabiPlugin::make_indirect_shader(align, false);
             let indirect_shader_events = HanabiPlugin::make_indirect_shader(align, true);
+            let indirect_batch_shader = HanabiPlugin::make_indirect_batch_shader(align);
+            let render_batch_shader = HanabiPlugin::make_render_batch_shader(align);
+
+            let effect_sort_metadata_padding_code =
+                GpuEffectSortMetadata::padding_code(min_storage_buffer_offset_alignment);
+
+            let init_indirect_batch_shader = Shader::from_wgsl(
+                include_str!("render/vfx_init_indirect_batch.wgsl"),
+                std::path::Path::new(file!())
+                    .parent()
+                    .unwrap()
+                    .join("render/vfx_init_indirect_batch.wgsl")
+                    .to_string_lossy(),
+            );
+            let sort_indirect_batch_shader = Shader::from_wgsl(
+                include_str!("render/vfx_sort_indirect_batch.wgsl").replace(
+                    "{{EFFECT_SORT_METADATA_PADDING}}",
+                    &effect_sort_metadata_padding_code,
+                ),
+                std::path::Path::new(file!())
+                    .parent()
+                    .unwrap()
+                    .join("render/vfx_sort_fill.wgsl")
+                    .to_string_lossy(),
+            );
             let sort_fill_shader = Shader::from_wgsl(
-                include_str!("render/vfx_sort_fill.wgsl"),
+                include_str!("render/vfx_sort_fill.wgsl").replace(
+                    "{{EFFECT_SORT_METADATA_PADDING}}",
+                    &effect_sort_metadata_padding_code,
+                ),
                 std::path::Path::new(file!())
                     .parent()
                     .unwrap()
@@ -318,6 +408,10 @@ impl Plugin for HanabiPlugin {
             let mut assets = app.world_mut().resource_mut::<Assets<Shader>>();
             let indirect_shader_noevent = assets.add(indirect_shader_noevent);
             let indirect_shader_events = assets.add(indirect_shader_events);
+            let indirect_batch_shader = assets.add(indirect_batch_shader);
+            let render_batch_shader = assets.add(render_batch_shader);
+            let init_indirect_batch_shader = assets.add(init_indirect_batch_shader);
+            let sort_indirect_batch_shader = assets.add(sort_indirect_batch_shader);
             let sort_fill_shader = assets.add(sort_fill_shader);
             let sort_shader = assets.add(sort_shader);
             let sort_copy_shader = assets.add(sort_copy_shader);
@@ -325,6 +419,10 @@ impl Plugin for HanabiPlugin {
             (
                 indirect_shader_noevent,
                 indirect_shader_events,
+                indirect_batch_shader,
+                render_batch_shader,
+                init_indirect_batch_shader,
+                sort_indirect_batch_shader,
                 sort_fill_shader,
                 sort_shader,
                 sort_copy_shader,
@@ -335,6 +433,9 @@ impl Plugin for HanabiPlugin {
             render_device.clone(),
             indirect_shader_noevent,
             indirect_shader_events,
+            init_indirect_batch_shader,
+            indirect_batch_shader,
+            render_batch_shader,
         );
 
         let effect_cache = EffectCache::new(render_device.clone());
@@ -344,6 +445,7 @@ impl Plugin for HanabiPlugin {
         let render_app = app.sub_app_mut(RenderApp);
         let sort_bind_groups = SortBindGroups::new(
             render_app.world_mut(),
+            sort_indirect_batch_shader,
             sort_fill_shader,
             sort_shader,
             sort_copy_shader,
@@ -358,14 +460,16 @@ impl Plugin for HanabiPlugin {
             .init_resource::<RenderDebugSettings>()
             .init_resource::<EffectBindGroups>()
             .init_resource::<PropertyBindGroups>()
-            .init_resource::<InitFillDispatchQueue>()
             .insert_resource(sort_bind_groups)
-            .init_resource::<UtilsPipeline>()
             .init_resource::<GpuBufferOperations>()
             .init_resource::<DispatchIndirectPipeline>()
             .init_resource::<SpecializedComputePipelines<DispatchIndirectPipeline>>()
-            .init_resource::<ParticlesInitPipeline>()
-            .init_resource::<SpecializedComputePipelines<ParticlesInitPipeline>>()
+            .init_resource::<InitIndirectBatchPipeline>()
+            .init_resource::<SpecializedComputePipelines<InitIndirectBatchPipeline>>()
+            .init_resource::<IndirectBatchPipeline>()
+            .init_resource::<SpecializedComputePipelines<IndirectBatchPipeline>>()
+            .init_resource::<RenderBatchPipeline>()
+            .init_resource::<SpecializedComputePipelines<RenderBatchPipeline>>()
             .init_resource::<ParticlesInitPipeline>()
             .init_resource::<SpecializedComputePipelines<ParticlesInitPipeline>>()
             .init_resource::<ParticlesUpdatePipeline>()
@@ -375,7 +479,7 @@ impl Plugin for HanabiPlugin {
             .init_resource::<ExtractedEffects>()
             .init_resource::<EffectAssetEvents>()
             .init_resource::<SimParams>()
-            .init_resource::<SortedEffectBatches>()
+            .init_resource::<SortedEffects>()
             .configure_sets(
                 Render,
                 (
@@ -400,6 +504,7 @@ impl Plugin for HanabiPlugin {
                             .after(bevy::render::mesh::allocator::allocate_and_free_meshes),
                         prepare_effects,
                         batch_effects,
+                        prepare_late_gpu_resources,
                     )
                         .chain()
                         .after(prepare_assets::<bevy::render::mesh::RenderMesh>)
@@ -414,10 +519,6 @@ impl Plugin for HanabiPlugin {
                     prepare_property_buffers
                         .in_set(EffectSystems::PrepareEffectGpuResources)
                         .after(add_effects)
-                        .before(prepare_bind_groups),
-                    queue_init_fill_dispatch_ops
-                        .in_set(EffectSystems::PrepareEffectGpuResources)
-                        .after(prepare_gpu_resources)
                         .before(prepare_bind_groups),
                     prepare_bind_groups
                         .in_set(EffectSystems::PrepareBindGroups)

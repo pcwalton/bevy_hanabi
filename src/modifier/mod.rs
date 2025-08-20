@@ -674,11 +674,11 @@ impl EmitSpawnEventModifier {
 
         let cond = match self.condition {
             EventEmitCondition::Always => format!(
-                "if (is_alive) {{ append_spawn_events_{channel_index}(particle_index, {}); }}",
+                "if (is_alive) {{ append_spawn_events_{channel_index}(effect_metadata_index, particle_index, {}); }}",
                 count_var
             ),
             EventEmitCondition::OnDie => format!(
-                "if (was_alive && !is_alive) {{ append_spawn_events_{channel_index}(particle_index, {}); }}",
+                "if (was_alive && !is_alive) {{ append_spawn_events_{channel_index}(effect_metadata_index, particle_index, {}); }}",
                 count_var
             ),
         };
@@ -862,6 +862,7 @@ struct Particle {{
 fn main() {{
     var particle = Particle();
     var transform: mat4x4<f32> = mat4x4<f32>();
+    let effect_metadata_index = 0u;
 {main_code}
 }}"##
             );
@@ -994,6 +995,7 @@ fn main() {{
     var particle: Particle = particle_buffer.particles[0];
     var transform: mat4x4<f32> = mat4x4<f32>();
     var is_alive = true;
+    let effect_metadata_index = 0u;
 {update_code}
 }}"##
             );

@@ -167,7 +167,7 @@ impl Modifier for RadialAccelModifier {
 
         context.make_fn(
             &func_name,
-            "particle: ptr<function, Particle>",
+            "particle: ptr<function, Particle>, effect_metadata_index: u32",
             module,
             &mut |m: &mut Module, ctx: &mut dyn EvalContext| -> Result<String, ExprError> {
                 let origin = ctx.eval(m, self.origin)?;
@@ -185,7 +185,7 @@ impl Modifier for RadialAccelModifier {
             },
         )?;
 
-        context.main_code += &format!("{}(&particle);\n", func_name);
+        context.main_code += &format!("{}(&particle, effect_metadata_index);\n", func_name);
 
         Ok(())
     }
@@ -290,7 +290,7 @@ impl Modifier for TangentAccelModifier {
         let accel = context.eval(module, self.accel)?;
 
         context.extra_code += &format!(
-            r##"fn {}(particle: ptr<function, Particle>) {{
+            r##"fn {}(particle: ptr<function, Particle>, effect_metadata_index: u32) {{
     let radial = normalize((*particle).{} - {});
     let tangent = normalize(cross({}, radial));
     (*particle).{} += tangent * (({}) * sim_params.delta_time);
@@ -304,7 +304,7 @@ impl Modifier for TangentAccelModifier {
             accel,
         );
 
-        context.main_code += &format!("{}(&particle);\n", func_name);
+        context.main_code += &format!("{}(&particle, effect_metadata_index);\n", func_name);
 
         Ok(())
     }
