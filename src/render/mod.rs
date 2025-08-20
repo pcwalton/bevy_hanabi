@@ -455,6 +455,8 @@ pub struct GpuEffectMetadata {
 
     /// Index of the spawner associated with this effect in the spawner buffer.
     pub spawner_index: u32,
+
+    pub mesh_is_indexed: u32,
 }
 
 /// Single init fill dispatch item in an [`InitFillDispatchQueue`].

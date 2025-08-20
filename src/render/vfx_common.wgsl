@@ -189,6 +189,19 @@ struct EffectMetadata {
     {{EFFECT_METADATA_PADDING}}
 }
 
+struct BatchMetadata {
+    total_batch_count: u32,
+}
+
+struct BatchDescriptor {
+    first_batch_effect_index_offset: u32,
+    last_batch_effect_index_offset: u32,
+    indirect_draw_command_offset: u32,
+    /// 1 if the mesh is indexed or 0 if it isn't.
+    mesh_is_indexed: u32,
+
+}
+
 /// Stride, in u32 count, between elements of an array<EffectMetadata>.
 const EFFECT_METADATA_STRIDE: u32 = {{EFFECT_METADATA_STRIDE}} / 4u;
 
