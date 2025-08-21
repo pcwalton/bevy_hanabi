@@ -1,5 +1,6 @@
 #import bevy_hanabi::vfx_common::{
-    BatchMetadata, EffectMetadata, IndexedIndirectDrawCommand, NonIndexedIndirectDrawCommand
+    BatchDescriptor, BatchMetadata, EffectMetadata, IndexedIndirectDrawCommand,
+    NonIndexedIndirectDrawCommand
 }
 
 @group(0) @binding(0) var<uniform> batch_metadata : BatchMetadata;
@@ -24,7 +25,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         batch_descriptors[thread_index].last_batch_effect_index_offset;
     let indirect_draw_command_offset =
         batch_descriptors[thread_index].indirect_draw_command_offset;
-    let mesh_is_indexed = batch_descriptors[thread_index].mesh_is_indexed != 0;
+    let mesh_is_indexed = batch_descriptors[thread_index].mesh_is_indexed != 0u;
 
     // Shouldn't happen but let's be safe.
     if (first_batch_effect_index_offset == last_batch_effect_index_offset) {
@@ -45,9 +46,10 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let first_index_or_vertex_offset =
         effect_metadata[first_batch_effect_index].first_index_or_vertex_offset;
     let vertex_offset_or_base_instance =
-        effect_metadata[first_batch_effect_index].vertex_offset_or_base_instance;
+        u32(effect_metadata[first_batch_effect_index].vertex_offset_or_base_instance);
     let base_instance = effect_metadata[first_batch_effect_index].base_instance;
 
+    // FIXME: This is wrong. We're going to MDI so we need *multiple* draw commands.
     if (mesh_is_indexed) {
         indexed_indirect_draw_commands[indirect_draw_command_offset].index_count =
             index_or_vertex_count;

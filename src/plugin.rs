@@ -28,15 +28,15 @@ use crate::{
     render::{
         add_effects, batch_effects, clear_transient_batch_inputs, extract_effect_events,
         extract_effects, fixup_parents, on_remove_cached_effect, on_remove_cached_properties,
-        prepare_bind_groups, prepare_effects, prepare_gpu_resources, prepare_property_buffers,
-        queue_effects, queue_init_fill_dispatch_ops, resolve_parents, update_mesh_locations,
-        DebugSettings, DispatchIndirectPipeline, DrawEffects, EffectAssetEvents, EffectBindGroups,
-        EffectCache, EffectsMeta, EventCache, ExtractedEffects, GpuBufferOperations,
-        GpuEffectMetadata, GpuSpawnerParams, InitFillDispatchQueue, ParticlesInitPipeline,
-        ParticlesRenderPipeline, ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache,
-        RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams, SortBindGroups,
-        SortedEffectBatches, StorageType as _, UtilsPipeline, VfxSimulateDriverNode,
-        VfxSimulateNode,
+        prepare_bind_groups, prepare_effects, prepare_gpu_resources, prepare_late_gpu_resources,
+        prepare_property_buffers, queue_effects, queue_init_fill_dispatch_ops, resolve_parents,
+        update_mesh_locations, DebugSettings, DispatchIndirectPipeline, DrawEffects,
+        EffectAssetEvents, EffectBindGroups, EffectCache, EffectsMeta, EventCache,
+        ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuSpawnerParams,
+        InitFillDispatchQueue, ParticlesInitPipeline, ParticlesRenderPipeline,
+        ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache, RenderBatchPipeline,
+        RenderDebugSettings, ShaderCache, SimParams, SortBindGroups, SortedEffectBatches,
+        StorageType as _, UtilsPipeline, VfxSimulateDriverNode, VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -430,6 +430,7 @@ impl Plugin for HanabiPlugin {
                             .after(bevy::render::mesh::allocator::allocate_and_free_meshes),
                         prepare_effects,
                         batch_effects,
+                        prepare_late_gpu_resources,
                     )
                         .chain()
                         .after(prepare_assets::<bevy::render::mesh::RenderMesh>)

@@ -11,7 +11,6 @@ use std::{
 
 #[cfg(feature = "2d")]
 use bevy::core_pipeline::core_2d::{Transparent2d, CORE_2D_DEPTH_FORMAT};
-use bevy::ecs::entity::EntityHashSet;
 #[cfg(feature = "2d")]
 use bevy::math::FloatOrd;
 #[cfg(feature = "3d")]
@@ -25,6 +24,7 @@ use bevy::{
     },
     render::render_phase::{BinnedPhaseItem, ViewBinnedRenderPhases},
 };
+use bevy::{ecs::entity::EntityHashSet, render::render_resource::encase::private::WriteInto};
 use bevy::{
     ecs::{
         component::Tick,
@@ -56,7 +56,7 @@ use bevy::{
     },
 };
 use bitflags::bitflags;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{NoUninit, Pod, Zeroable};
 use effect_cache::{BufferState, CachedEffect, EffectSlice};
 use event::{CachedChildInfo, CachedEffectEvents, CachedParentInfo, CachedParentRef, GpuChildInfo};
 use fixedbitset::FixedBitSet;
@@ -1783,6 +1783,9 @@ impl FromWorld for RenderBatchPipeline {
         // pipeline specialization.
         let shader = world.resource::<EffectsMeta>().render_batch_shader.clone();
 
+        let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
+        let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
+
         let bind_group_layout_entries = [
             // @group(0) @binding(0) var<uniform> batch_metadata :
             // BatchMetadata;
@@ -1828,7 +1831,7 @@ impl FromWorld for RenderBatchPipeline {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(GpuEffectMetadata::min_size()),
+                    min_binding_size: Some(effect_metadata_size),
                 },
                 count: None,
             },
@@ -4691,6 +4694,63 @@ pub(crate) fn batch_effects(
     effects_meta
         .render_batch_metadata_buffer
         .set(GpuRenderBatchMetadata { total_batch_count });
+}
+
+/// Uploads buffers that were prepared in [`batch_effects`] to the GPU.
+pub(crate) fn prepare_late_gpu_resources(
+    mut effects_meta: ResMut<EffectsMeta>,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+) {
+    effects_meta
+        .render_batch_metadata_buffer
+        .write_buffer(&render_device, &render_queue);
+    ensure_raw_buffer_nonempty_and_write(
+        &mut effects_meta.render_batch_effect_index_buffer,
+        &render_device,
+        &render_queue,
+    );
+    ensure_buffer_nonempty_and_write(
+        &mut effects_meta.render_batch_descriptor_buffer,
+        &render_device,
+        &render_queue,
+    );
+    ensure_raw_buffer_nonempty_and_write(
+        &mut effects_meta.indexed_indirect_draw_command_buffer,
+        &render_device,
+        &render_queue,
+    );
+    ensure_raw_buffer_nonempty_and_write(
+        &mut effects_meta.non_indexed_indirect_draw_command_buffer,
+        &render_device,
+        &render_queue,
+    );
+
+    fn ensure_buffer_nonempty_and_write<T>(
+        buffer: &mut BufferVec<T>,
+        render_device: &RenderDevice,
+        render_queue: &RenderQueue,
+    ) where
+        T: ShaderType + WriteInto + Default,
+    {
+        if buffer.is_empty() {
+            buffer.push(T::default());
+        }
+        buffer.write_buffer(render_device, render_queue);
+    }
+
+    fn ensure_raw_buffer_nonempty_and_write<T>(
+        buffer: &mut RawBufferVec<T>,
+        render_device: &RenderDevice,
+        render_queue: &RenderQueue,
+    ) where
+        T: NoUninit + Default,
+    {
+        if buffer.is_empty() {
+            buffer.push(T::default());
+        }
+        buffer.write_buffer(render_device, render_queue);
+    }
 }
 
 /// Per-buffer bind groups for a GPU effect buffer.
