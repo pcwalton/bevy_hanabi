@@ -47,27 +47,30 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         effect_metadata[first_batch_effect_index].first_index_or_vertex_offset;
     let vertex_offset_or_base_instance =
         u32(effect_metadata[first_batch_effect_index].vertex_offset_or_base_instance);
-    let base_instance = effect_metadata[first_batch_effect_index].base_instance;
 
-    // FIXME: This is wrong. We're going to MDI so we need *multiple* draw commands.
-    if (mesh_is_indexed) {
-        indexed_indirect_draw_commands[indirect_draw_command_offset].index_count =
-            index_or_vertex_count;
-        indexed_indirect_draw_commands[indirect_draw_command_offset].instance_count =
-            total_instance_count;
-        indexed_indirect_draw_commands[indirect_draw_command_offset].first_index =
-            first_index_or_vertex_offset;
-        indexed_indirect_draw_commands[indirect_draw_command_offset].vertex_offset =
-            vertex_offset_or_base_instance;
-        indexed_indirect_draw_commands[indirect_draw_command_offset].base_instance = base_instance;
-    } else {
-        non_indexed_indirect_draw_commands[indirect_draw_command_offset].vertex_count =
-            index_or_vertex_count;
-        non_indexed_indirect_draw_commands[indirect_draw_command_offset].instance_count =
-            total_instance_count;
-        non_indexed_indirect_draw_commands[indirect_draw_command_offset].vertex_offset =
-            first_index_or_vertex_offset;
-        non_indexed_indirect_draw_commands[indirect_draw_command_offset].base_instance =
-            base_instance;
+    let effect_count = last_batch_effect_index_offset - first_batch_effect_index_offset;
+    for (var effect_index = 0u; effect_index < effect_count; effect_index += 1u) {
+        let base_instance = effect_metadata[first_batch_effect_index + effect_index].base_instance;
+        let indirect_draw_command_index = indirect_draw_command_offset + effect_index;
+        if (mesh_is_indexed) {
+            indexed_indirect_draw_commands[indirect_draw_command_index].index_count =
+                index_or_vertex_count;
+            indexed_indirect_draw_commands[indirect_draw_command_index].instance_count =
+                total_instance_count;
+            indexed_indirect_draw_commands[indirect_draw_command_index].first_index =
+                first_index_or_vertex_offset;
+            indexed_indirect_draw_commands[indirect_draw_command_index].vertex_offset =
+                vertex_offset_or_base_instance;
+            indexed_indirect_draw_commands[indirect_draw_command_index].base_instance = base_instance;
+        } else {
+            non_indexed_indirect_draw_commands[indirect_draw_command_index].vertex_count =
+                index_or_vertex_count;
+            non_indexed_indirect_draw_commands[indirect_draw_command_index].instance_count =
+                total_instance_count;
+            non_indexed_indirect_draw_commands[indirect_draw_command_index].vertex_offset =
+                first_index_or_vertex_offset;
+            non_indexed_indirect_draw_commands[indirect_draw_command_index].base_instance =
+                base_instance;
+        }
     }
 }

@@ -4641,30 +4641,36 @@ pub(crate) fn batch_effects(
         };
 
         // Push indirect draw commands.
-        let base_instance = sorted_effect_batches
-            .get(effect_render_batch[0])
-            .unwrap()
-            .slice
-            .start;
-        let indirect_draw_command_offset = match cached_mesh_location.indexed {
-            Some(_) => effects_meta.indexed_indirect_draw_command_buffer.push(
-                GpuIndexedIndirectDrawCommand {
-                    index_count: cached_mesh_location.vertex_or_index_count,
-                    instance_count: 0,
-                    first_index: cached_mesh_location.first_index_or_vertex_offset,
-                    vertex_offset: cached_mesh_location.vertex_offset_or_base_instance as u32,
-                    base_instance,
-                },
-            ) as u32,
-            None => effects_meta.non_indexed_indirect_draw_command_buffer.push(
-                GpuNonIndexedIndirectDrawCommand {
-                    vertex_count: cached_mesh_location.vertex_or_index_count,
-                    instance_count: 0,
-                    vertex_offset: cached_mesh_location.first_index_or_vertex_offset,
-                    base_instance,
-                },
-            ) as u32,
-        };
+        let mut indirect_draw_command_offset = None;
+        for &effect_batch_index in &effect_render_batch {
+            let base_instance = sorted_effect_batches
+                .get(effect_render_batch[effect_batch_index.0 as usize])
+                .unwrap()
+                .slice
+                .start;
+            let indirect_draw_command_index = match cached_mesh_location.indexed {
+                Some(_) => effects_meta.indexed_indirect_draw_command_buffer.push(
+                    GpuIndexedIndirectDrawCommand {
+                        index_count: cached_mesh_location.vertex_or_index_count,
+                        instance_count: 0,
+                        first_index: cached_mesh_location.first_index_or_vertex_offset,
+                        vertex_offset: cached_mesh_location.vertex_offset_or_base_instance as u32,
+                        base_instance,
+                    },
+                ) as u32,
+                None => effects_meta.non_indexed_indirect_draw_command_buffer.push(
+                    GpuNonIndexedIndirectDrawCommand {
+                        vertex_count: cached_mesh_location.vertex_or_index_count,
+                        instance_count: 0,
+                        vertex_offset: cached_mesh_location.first_index_or_vertex_offset,
+                        base_instance,
+                    },
+                ) as u32,
+            };
+            if indirect_draw_command_offset.is_none() {
+                indirect_draw_command_offset = Some(indirect_draw_command_index);
+            }
+        }
 
         let first_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
@@ -4681,7 +4687,7 @@ pub(crate) fn batch_effects(
             .push(GpuRenderBatchDescriptor {
                 first_batch_effect_index_offset,
                 last_batch_effect_index_offset,
-                indirect_draw_command_offset,
+                indirect_draw_command_offset: indirect_draw_command_offset.unwrap_or_default(),
                 mesh_is_indexed: if cached_mesh_location.indexed.is_some() {
                     1
                 } else {
