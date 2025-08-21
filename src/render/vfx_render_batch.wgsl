@@ -2,7 +2,7 @@
     BatchMetadata, EffectMetadata, IndexedIndirectDrawCommand, NonIndexedIndirectDrawCommand
 }
 
-@group(0) @binding(0) var<storage, read> batch_metadata : BatchMetadata;
+@group(0) @binding(0) var<uniform> batch_metadata : BatchMetadata;
 @group(0) @binding(1) var<storage, read> batch_descriptors : array<BatchDescriptor>;
 @group(0) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
 @group(0) @binding(3) var<storage, read_write> effect_metadata : array<EffectMetadata>;

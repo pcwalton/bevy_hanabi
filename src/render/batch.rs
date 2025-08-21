@@ -12,7 +12,9 @@ use super::{
     event::{CachedChildInfo, CachedEffectEvents},
     BufferBindingSource, CachedMesh, LayoutFlags, PropertyBindGroupKey,
 };
-use crate::{AlphaMode, EffectAsset, EffectShader, ParticleLayout, TextureLayout};
+use crate::{
+    render::CachedMeshLocation, AlphaMode, EffectAsset, EffectShader, ParticleLayout, TextureLayout,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BatchSpawnInfo {
@@ -96,6 +98,7 @@ pub(crate) struct EffectBatch {
     /// [`ParticleEffect`]: crate::ParticleEffect
     pub entities: Vec<u32>,
     pub cached_effect_events: Option<CachedEffectEvents>,
+    pub cached_mesh_location: Option<CachedMeshLocation>,
     pub sort_fill_indirect_dispatch_index: Option<u32>,
 }
 

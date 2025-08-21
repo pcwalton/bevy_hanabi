@@ -61,6 +61,7 @@ use effect_cache::{BufferState, CachedEffect, EffectSlice};
 use event::{CachedChildInfo, CachedEffectEvents, CachedParentInfo, CachedParentRef, GpuChildInfo};
 use fixedbitset::FixedBitSet;
 use gpu_buffer::GpuBuffer;
+use indexmap::IndexMap;
 use naga_oil::compose::{Composer, NagaModuleDescriptor};
 
 use crate::{
@@ -68,7 +69,8 @@ use crate::{
     calc_func_id,
     render::{
         batch::{
-            BatchInput, EffectDrawBatch, EffectSorter, EffectToBeSorted, InitAndUpdatePipelineIds,
+            BatchInput, EffectBatchIndex, EffectDrawBatch, EffectSorter, EffectToBeSorted,
+            InitAndUpdatePipelineIds,
         },
         effect_cache::DispatchBufferIndices,
     },
@@ -459,6 +461,41 @@ pub struct GpuEffectMetadata {
     pub mesh_is_indexed: u32,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
+struct GpuRenderBatchMetadata {
+    total_batch_count: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
+struct GpuRenderBatchDescriptor {
+    first_batch_effect_index_offset: u32,
+    last_batch_effect_index_offset: u32,
+    indirect_draw_command_offset: u32,
+    /// 1 if the mesh is indexed or 0 if it isn't.
+    mesh_is_indexed: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
+struct GpuIndexedIndirectDrawCommand {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: u32,
+    base_instance: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
+struct GpuNonIndexedIndirectDrawCommand {
+    vertex_count: u32,
+    instance_count: u32,
+    vertex_offset: u32,
+    base_instance: u32,
+}
+
 /// Single init fill dispatch item in an [`InitFillDispatchQueue`].
 #[derive(Debug)]
 pub(super) struct InitFillDispatchItem {
@@ -788,6 +825,27 @@ impl SpecializedComputePipeline for DispatchIndirectPipeline {
                 self.indirect_shader_noevent.clone()
             },
             shader_defs,
+            entry_point: "main".into(),
+            push_constant_ranges: vec![],
+            zero_initialize_workgroup_memory: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct RenderBatchPipelineKey;
+
+impl SpecializedComputePipeline for RenderBatchPipeline {
+    type Key = RenderBatchPipelineKey;
+
+    fn specialize(&self, key: Self::Key) -> ComputePipelineDescriptor {
+        trace!("Specializing render batch pipeline");
+
+        ComputePipelineDescriptor {
+            label: Some("hanabi:compute_pipeline:render_batch"),
+            layout: vec![self.bind_group_layout.clone()],
+            shader: self.shader.clone(),
+            shader_defs: vec![],
             entry_point: "main".into(),
             push_constant_ranges: vec![],
             zero_initialize_workgroup_memory: false,
@@ -1707,6 +1765,107 @@ impl SpecializedComputePipeline for ParticlesUpdatePipeline {
             entry_point: "main".into(),
             push_constant_ranges: Vec::new(),
             zero_initialize_workgroup_memory: false,
+        }
+    }
+}
+
+#[derive(Resource)]
+pub(crate) struct RenderBatchPipeline {
+    bind_group_layout: BindGroupLayout,
+    shader: Handle<Shader>,
+}
+
+impl FromWorld for RenderBatchPipeline {
+    fn from_world(world: &mut World) -> Self {
+        let render_device = world.get_resource::<RenderDevice>().unwrap();
+
+        // Copy the shader to self, because we can't access anything else during
+        // pipeline specialization.
+        let shader = world.resource::<EffectsMeta>().render_batch_shader.clone();
+
+        let bind_group_layout_entries = [
+            // @group(0) @binding(0) var<uniform> batch_metadata :
+            // BatchMetadata;
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(GpuRenderBatchMetadata::min_size()),
+                },
+                count: None,
+            },
+            // @group(0) @binding(1) var<storage, read> batch_descriptors :
+            // array<BatchDescriptor>;
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(GpuRenderBatchDescriptor::min_size()),
+                },
+                count: None,
+            },
+            // @group(0) @binding(2) var<storage, read> batch_effect_indices :
+            // array<u32>;
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(u32::min_size()),
+                },
+                count: None,
+            },
+            // @group(0) @binding(3) var<storage, read_write> effect_metadata :
+            // array<EffectMetadata>;
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(GpuEffectMetadata::min_size()),
+                },
+                count: None,
+            },
+            // @group(0) @binding(4) var<storage, read_write>
+            // indexed_indirect_draw_commands :
+            // array<IndexedIndirectDrawCommand>;
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(GpuIndexedIndirectDrawCommand::min_size()),
+                },
+                count: None,
+            },
+            // @group(0) @binding(5) var<storage, read_write> non_indexed_indirect_draw_commands : array<NonIndexedIndirectDrawCommand>;
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(GpuNonIndexedIndirectDrawCommand::min_size()),
+                },
+                count: None,
+            },
+        ];
+
+        let bind_group_layout = render_device.create_bind_group_layout(
+            "hanabi:bind_group_layout:render_batch",
+            &bind_group_layout_entries,
+        );
+
+        Self {
+            bind_group_layout,
+            shader,
         }
     }
 }
@@ -2667,6 +2826,7 @@ pub struct EffectsMeta {
     indirect_metadata_bind_group: Option<BindGroup>,
     /// Bind group #2 of the vfx_indirect shader, containing the spawners.
     indirect_spawner_bind_group: Option<BindGroup>,
+    render_batch_bind_group: Option<BindGroup>,
     /// Global shared GPU uniform buffer storing the simulation parameters,
     /// uploaded each frame from CPU to GPU.
     sim_params_uniforms: UniformBuffer<GpuSimParams>,
@@ -2679,11 +2839,18 @@ pub struct EffectsMeta {
     /// Global shared GPU buffer storing the various `EffectMetadata`
     /// structs for the active effect instances.
     effect_metadata_buffer: BufferTable<GpuEffectMetadata>,
+    total_render_batch_count: u32,
+    render_batch_metadata_buffer: UniformBuffer<GpuRenderBatchMetadata>,
+    render_batch_effect_index_buffer: RawBufferVec<u32>,
+    render_batch_descriptor_buffer: BufferVec<GpuRenderBatchDescriptor>,
+    indexed_indirect_draw_command_buffer: RawBufferVec<GpuIndexedIndirectDrawCommand>,
+    non_indexed_indirect_draw_command_buffer: RawBufferVec<GpuNonIndexedIndirectDrawCommand>,
     /// Various GPU limits and aligned sizes lazily allocated and cached for
     /// convenience.
     gpu_limits: GpuLimits,
     indirect_shader_noevent: Handle<Shader>,
     indirect_shader_events: Handle<Shader>,
+    render_batch_shader: Handle<Shader>,
     /// Pipeline cache ID of the two indirect dispatch pass pipelines (the
     /// -noevent and -events variants).
     indirect_pipeline_ids: [CachedComputePipelineId; 2],
@@ -2691,6 +2858,7 @@ pub struct EffectsMeta {
     /// is either the -noevent or -events variant depending on whether there's
     /// any child effect with GPU events currently active.
     active_indirect_pipeline_id: CachedComputePipelineId,
+    render_batch_pipeline_id: CachedComputePipelineId,
 }
 
 impl EffectsMeta {
@@ -2698,6 +2866,7 @@ impl EffectsMeta {
         device: RenderDevice,
         indirect_shader_noevent: Handle<Shader>,
         indirect_shader_events: Handle<Shader>,
+        render_batch_shader: Handle<Shader>,
     ) -> Self {
         let gpu_limits = GpuLimits::from_device(&device);
 
@@ -2714,6 +2883,7 @@ impl EffectsMeta {
             indirect_sim_params_bind_group: None,
             indirect_metadata_bind_group: None,
             indirect_spawner_bind_group: None,
+            render_batch_bind_group: None,
             sim_params_uniforms: UniformBuffer::default(),
             spawner_buffer: AlignedBufferVec::new(
                 BufferUsages::STORAGE,
@@ -2729,14 +2899,22 @@ impl EffectsMeta {
                 NonZeroU64::new(item_align),
                 Some("hanabi:buffer:effect_metadata".to_string()),
             ),
+            total_render_batch_count: 0,
+            render_batch_metadata_buffer: UniformBuffer::default(),
+            render_batch_effect_index_buffer: RawBufferVec::new(BufferUsages::STORAGE),
+            render_batch_descriptor_buffer: BufferVec::new(BufferUsages::STORAGE),
+            indexed_indirect_draw_command_buffer: RawBufferVec::new(BufferUsages::STORAGE),
+            non_indexed_indirect_draw_command_buffer: RawBufferVec::new(BufferUsages::STORAGE),
             gpu_limits,
             indirect_shader_noevent,
             indirect_shader_events,
+            render_batch_shader,
             indirect_pipeline_ids: [
                 CachedComputePipelineId::INVALID,
                 CachedComputePipelineId::INVALID,
             ],
             active_indirect_pipeline_id: CachedComputePipelineId::INVALID,
+            render_batch_pipeline_id: CachedComputePipelineId::INVALID,
         }
     }
 
@@ -3555,10 +3733,13 @@ pub struct PipelineSystemParams<'w, 's> {
     init_pipeline: ResMut<'w, ParticlesInitPipeline>,
     indirect_pipeline: Res<'w, DispatchIndirectPipeline>,
     update_pipeline: ResMut<'w, ParticlesUpdatePipeline>,
+    render_batch_pipeline: ResMut<'w, RenderBatchPipeline>,
     specialized_init_pipelines: ResMut<'w, SpecializedComputePipelines<ParticlesInitPipeline>>,
     specialized_update_pipelines: ResMut<'w, SpecializedComputePipelines<ParticlesUpdatePipeline>>,
     specialized_indirect_pipelines:
         ResMut<'w, SpecializedComputePipelines<DispatchIndirectPipeline>>,
+    specialized_render_batch_pipelines:
+        ResMut<'w, SpecializedComputePipelines<RenderBatchPipeline>>,
     marker: PhantomData<&'s usize>,
 }
 
@@ -3603,6 +3784,8 @@ pub(crate) fn prepare_effects(
     let specialized_init_pipelines = pipelines.specialized_init_pipelines.into_inner();
     let specialized_update_pipelines = pipelines.specialized_update_pipelines.into_inner();
     let specialized_indirect_pipelines = pipelines.specialized_indirect_pipelines.into_inner();
+    let specialized_render_batch_pipelines =
+        pipelines.specialized_render_batch_pipelines.into_inner();
 
     // // sort first by z and then by handle. this ensures that, when possible,
     // batches span multiple z layers // batches won't span z-layers if there is
@@ -3645,6 +3828,14 @@ pub(crate) fn prepare_effects(
             trace!("Last event buffer removed; switching indirect pass to no-event mode...");
             effects_meta.active_indirect_pipeline_id = effects_meta.indirect_pipeline_ids[0];
         }
+    }
+
+    if effects_meta.render_batch_pipeline_id == CachedComputePipelineId::INVALID {
+        effects_meta.render_batch_pipeline_id = specialized_render_batch_pipelines.specialize(
+            pipeline_cache,
+            &pipelines.render_batch_pipeline,
+            RenderBatchPipelineKey,
+        );
     }
 
     gpu_buffer_operations.begin_frame();
@@ -4208,6 +4399,7 @@ pub(crate) fn batch_effects(
         Entity,
         &MainEntity,
         &CachedMesh,
+        Option<&CachedMeshLocation>,
         Option<&CachedEffectEvents>,
         Option<&CachedChildInfo>,
         Option<&CachedProperties>,
@@ -4237,7 +4429,7 @@ pub(crate) fn batch_effects(
 
     let mut effect_sorter = EffectSorter::new();
 
-    for (entity, _, _, _, cached_child_info, _, _, input) in &q_cached_effects {
+    for (entity, _, _, _, _, cached_child_info, _, _, input) in &q_cached_effects {
         effect_sorter.effects.push(EffectToBeSorted {
             entity,
             buffer_index: input.effect_slice.buffer_index,
@@ -4268,6 +4460,7 @@ pub(crate) fn batch_effects(
             _,
             main_entity,
             cached_mesh,
+            cached_mesh_location,
             cached_effect_events,
             cached_child_info,
             cached_properties,
@@ -4397,6 +4590,7 @@ pub(crate) fn batch_effects(
         );
 
         // Spawn an EffectDrawBatch, to actually drive rendering.
+        // TODO: Move this to render batch construction below!
         commands
             .spawn(EffectDrawBatch {
                 effect_batch_index,
@@ -4410,6 +4604,94 @@ pub(crate) fn batch_effects(
     if !sort_queue.operation_queue.is_empty() {
         sorted_effect_batches.dispatch_queue_index = Some(gpu_buffer_operations.submit(sort_queue));
     }
+
+    // Build the render batches.
+
+    let mut effect_render_batches = IndexMap::new();
+    for (effect_batch_index, effect_batch) in sorted_effect_batches.iter().enumerate() {
+        effect_render_batches
+            .entry((effect_batch.handle.id(), effect_batch.buffer_index))
+            .or_insert(vec![])
+            .push(EffectBatchIndex(effect_batch_index as u32));
+    }
+
+    // Clear out the render batch buffers.
+    effects_meta.total_render_batch_count = 0;
+    effects_meta.render_batch_effect_index_buffer.clear();
+    effects_meta.render_batch_descriptor_buffer.clear();
+    effects_meta.indexed_indirect_draw_command_buffer.clear();
+    effects_meta
+        .non_indexed_indirect_draw_command_buffer
+        .clear();
+
+    // Rebuild the render batch buffers.
+    for (_, effect_render_batch) in effect_render_batches {
+        effects_meta.total_render_batch_count += 1;
+
+        let Some(cached_mesh_location) = sorted_effect_batches
+            .get(EffectBatchIndex(effect_render_batch[0].0))
+            .and_then(|effect_batch| effect_batch.cached_mesh_location.as_ref())
+        else {
+            error!("Couldn't find cached mesh location");
+            continue;
+        };
+
+        // Push indirect draw commands.
+        let base_instance = sorted_effect_batches
+            .get(effect_render_batch[0])
+            .unwrap()
+            .slice
+            .start;
+        let indirect_draw_command_offset = match cached_mesh_location.indexed {
+            Some(index_slice) => effects_meta.indexed_indirect_draw_command_buffer.push(
+                GpuIndexedIndirectDrawCommand {
+                    index_count: cached_mesh_location.vertex_or_index_count,
+                    instance_count: 0,
+                    first_index: cached_mesh_location.first_index_or_vertex_offset,
+                    vertex_offset: cached_mesh_location.vertex_offset_or_base_instance,
+                    base_instance,
+                },
+            ) as u32,
+            None => effects_meta.non_indexed_indirect_draw_command_buffer.push(
+                GpuNonIndexedIndirectDrawCommand {
+                    vertex_count: cached_mesh_location.vertex_or_index_count,
+                    instance_count: 0,
+                    vertex_offset: cached_mesh_location.first_index_or_vertex_offset,
+                    base_instance,
+                },
+            ) as u32,
+        };
+
+        let first_batch_effect_index_offset =
+            effects_meta.render_batch_effect_index_buffer.len() as u32;
+        for &effect_batch_index in &effect_render_batches {
+            effects_meta
+                .render_batch_effect_index_buffer
+                .push(effect_batch_index);
+        }
+        let last_batch_effect_index_offset =
+            effects_meta.render_batch_effect_index_buffer.len() as u32;
+
+        // TODO: Fill this in.
+        effects_meta
+            .render_batch_descriptor_buffer
+            .push(GpuRenderBatchDescriptor {
+                first_batch_effect_index_offset,
+                last_batch_effect_index_offset,
+                indirect_draw_command_offset,
+                mesh_is_indexed: if cached_mesh_location.indexed.is_some() {
+                    1
+                } else {
+                    0
+                },
+            });
+    }
+
+    effects_meta
+        .render_batch_metadata_buffer
+        .set(GpuRenderBatchMetadata {
+            total_batch_count: effects_meta.total_render_batch_count,
+        });
 }
 
 /// Per-buffer bind groups for a GPU effect buffer.
@@ -5699,6 +5981,7 @@ pub(crate) fn prepare_bind_groups(
     sorted_effect_batched: Res<SortedEffectBatches>,
     render_device: Res<RenderDevice>,
     dispatch_indirect_pipeline: Res<DispatchIndirectPipeline>,
+    render_batch_pipeline: Res<RenderBatchPipeline>,
     utils_pipeline: Res<UtilsPipeline>,
     update_pipeline: Res<ParticlesUpdatePipeline>,
     render_pipeline: ResMut<ParticlesRenderPipeline>,
@@ -5802,6 +6085,77 @@ pub(crate) fn prepare_bind_groups(
             effects_meta.indirect_spawner_bind_group = Some(bind_group);
         }
     }
+
+    // Create the render batch bind group
+    // FIXME: Don't do this every frame unconditionally if we don't need to.
+    trace!("Create render batch bind group...");
+    effects_meta.render_batch_bind_group = Some(
+        render_device.create_bind_group(
+            "hanabi:bind_group:vfx_render_batch@0",
+            &render_batch_pipeline.bind_group_layout,
+            &[
+                // @group(0) @binding(0) var<uniform> batch_metadata :
+                // BatchMetadata;
+                BindGroupEntry {
+                    binding: 0,
+                    resource: effects_meta
+                        .render_batch_metadata_buffer
+                        .binding()
+                        .expect("Render batch metadata buffer not available"),
+                },
+                // @group(0) @binding(1) var<storage, read>
+                // batch_descriptors : array<BatchDescriptor>;
+                BindGroupEntry {
+                    binding: 1,
+                    resource: effects_meta
+                        .render_batch_descriptor_buffer
+                        .binding()
+                        .expect("Render batch descriptor buffer not available"),
+                },
+                // @group(0) @binding(2) var<storage, read>
+                // batch_effect_indices : array<u32>;
+                BindGroupEntry {
+                    binding: 2,
+                    resource: effects_meta
+                        .render_batch_effect_index_buffer
+                        .binding()
+                        .expect("Render batch effect index buffer not available"),
+                },
+                // @group(0) @binding(3) var<storage, read_write>
+                // effect_metadata : array<EffectMetadata>;
+                BindGroupEntry {
+                    binding: 3,
+                    resource: effects_meta
+                        .effect_metadata_buffer
+                        .buffer()
+                        .expect("Effect metadata buffer not available")
+                        .as_entire_binding(),
+                },
+                // @group(0) @binding(4) var<storage, read_write>
+                // indexed_indirect_draw_commands :
+                // array<IndexedIndirectDrawCommand>;
+                BindGroupEntry {
+                    binding: 4,
+                    resource: effects_meta
+                        .indexed_indirect_draw_command_buffer
+                        .buffer()
+                        .expect("Indexed indirect draw command buffer not available")
+                        .as_entire_binding(),
+                },
+                // @group(0) @binding(5) var<storage, read_write>
+                // non_indexed_indirect_draw_commands :
+                // array<NonIndexedIndirectDrawCommand>;
+                BindGroupEntry {
+                    binding: 5,
+                    resource: effects_meta
+                        .non_indexed_indirect_draw_command_buffer
+                        .buffer()
+                        .expect("Non-indexed indirect draw command buffer not available")
+                        .as_entire_binding(),
+                },
+            ],
+        ),
+    );
 
     // Create the per-buffer bind groups
     trace!("Create per-buffer bind groups...");
@@ -7033,6 +7387,36 @@ impl Node for VfxSimulateNode {
                     compute_pass.pop_debug_group();
                 }
             }
+        }
+
+        // Compute render batch pass
+        {
+            let mut compute_pass =
+                self.begin_compute_pass("hanabi:render_batch", pipeline_cache, render_context);
+
+            compute_pass.push_debug_group("hanabi:render_batch:batch");
+
+            if compute_pass
+                .set_cached_compute_pipeline(effects_meta.render_batch_pipeline_id)
+                .is_err()
+            {
+                // FIXME - Bevy doesn't allow returning custom errors here...
+                return Ok(());
+            }
+
+            const WORKGROUP_SIZE: u32 = 64;
+            let total_effect_batch_count = effects_meta.effect_batch_count;
+            let workgroup_count = total_effect_batch_count.div_ceil(WORKGROUP_SIZE);
+
+            compute_pass.set_bind_group(
+                0,
+                effects_meta.render_batch_bind_group.as_ref().unwrap(),
+                &[],
+            );
+            compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+            trace!("render batch compute dispatched");
+
+            compute_pass.pop_debug_group();
         }
 
         Ok(())

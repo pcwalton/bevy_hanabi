@@ -199,7 +199,21 @@ struct BatchDescriptor {
     indirect_draw_command_offset: u32,
     /// 1 if the mesh is indexed or 0 if it isn't.
     mesh_is_indexed: u32,
+}
 
+struct IndexedIndirectDrawCommand {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: u32,
+    base_instance: u32,
+}
+
+struct NonIndexedIndirectDrawCommand {
+    vertex_count: u32,
+    instance_count: u32,
+    vertex_offset: u32,
+    base_instance: u32,
 }
 
 /// Stride, in u32 count, between elements of an array<EffectMetadata>.
