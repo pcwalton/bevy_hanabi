@@ -100,6 +100,8 @@ pub(crate) struct EffectBatch {
     pub cached_effect_events: Option<CachedEffectEvents>,
     pub cached_mesh_location: Option<CachedMeshLocation>,
     pub sort_fill_indirect_dispatch_index: Option<u32>,
+    pub position: Vec3,
+    pub main_entity: MainEntity,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -287,17 +289,13 @@ impl EffectSorter {
 /// all the groups of the effect.
 #[derive(Debug, Component)]
 pub(crate) struct EffectDrawBatch {
-    /// Index of the [`EffectBatch`] in the [`SortedEffectBatches`] this draw
-    /// batch is part of.
-    ///
-    /// Note: currently there's a 1:1 mapping between effect batch and draw
-    /// batch.
-    pub effect_batch_index: EffectBatchIndex,
+    pub indirect_draw_command_range: Range<u32>,
+    pub representative_effect_batch_index: EffectBatchIndex,
     /// Position of the emitter so we can compute distance to camera.
-    pub translation: Vec3,
+    pub representative_translation: Vec3,
     /// The main-world entity that contains this effect.
     #[allow(dead_code)]
-    pub main_entity: MainEntity,
+    pub representative_main_entity: MainEntity,
 }
 
 impl EffectBatch {
@@ -311,6 +309,7 @@ impl EffectBatch {
         dispatch_buffer_indices: DispatchBufferIndices,
         property_key: Option<PropertyBindGroupKey>,
         property_offset: Option<u32>,
+        main_entity: MainEntity,
     ) -> EffectBatch {
         assert_eq!(property_key.is_some(), property_offset.is_some());
         assert_eq!(
@@ -355,6 +354,8 @@ impl EffectBatch {
             cached_effect_events: cached_effect_events.cloned(),
             cached_mesh_location: cached_mesh_location.cloned(),
             sort_fill_indirect_dispatch_index: None, // set later as needed
+            position: input.position,
+            main_entity,
         }
     }
 }

@@ -181,6 +181,8 @@ struct EffectMetadata {
     /// Index of the spawner associated with this effect in the spawner buffer.
     spawner_index: u32,
 
+    mesh_is_indexed: u32,
+
     /// Padding for storage buffer alignment. This struct is sometimes bound as part
     /// of an array, or sometimes individually as a single unit. In the later case,
     /// we need it to be aligned to the GPU limits of the device. That limit is only

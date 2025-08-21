@@ -32,14 +32,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         return;
     }
 
-    var total_instance_count = 0u;
-    for (var batch_effect_index_offset = first_batch_effect_index_offset;
-            batch_effect_index_offset < last_batch_effect_index_offset;
-            batch_effect_index_offset += 1u) {
-        let batch_effect_index = batch_effect_indices[batch_effect_index_offset];
-        total_instance_count += effect_metadata[batch_effect_index].instance_count;
-    }
-
     let first_batch_effect_index = batch_effect_indices[first_batch_effect_index_offset];
 
     let index_or_vertex_count = effect_metadata[first_batch_effect_index].vertex_count;
@@ -48,25 +40,31 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let vertex_offset_or_base_instance =
         u32(effect_metadata[first_batch_effect_index].vertex_offset_or_base_instance);
 
+    // FIXME: I don't think there needs to be a loop here. We can just dispatch
+    // over all the batches in parallel.
     let effect_count = last_batch_effect_index_offset - first_batch_effect_index_offset;
     for (var effect_index = 0u; effect_index < effect_count; effect_index += 1u) {
-        let base_instance = effect_metadata[first_batch_effect_index + effect_index].base_instance;
+        let batch_effect_index =
+            batch_effect_indices[first_batch_effect_index_offset + effect_index];
+        let instance_count = effect_metadata[batch_effect_index].instance_count;
+        let base_instance = effect_metadata[batch_effect_index].base_instance;
         let indirect_draw_command_index = indirect_draw_command_offset + effect_index;
         if (mesh_is_indexed) {
             indexed_indirect_draw_commands[indirect_draw_command_index].index_count =
                 index_or_vertex_count;
             indexed_indirect_draw_commands[indirect_draw_command_index].instance_count =
-                total_instance_count;
+                instance_count;
             indexed_indirect_draw_commands[indirect_draw_command_index].first_index =
                 first_index_or_vertex_offset;
             indexed_indirect_draw_commands[indirect_draw_command_index].vertex_offset =
                 vertex_offset_or_base_instance;
-            indexed_indirect_draw_commands[indirect_draw_command_index].base_instance = base_instance;
+            indexed_indirect_draw_commands[indirect_draw_command_index].base_instance =
+                base_instance;
         } else {
             non_indexed_indirect_draw_commands[indirect_draw_command_index].vertex_count =
                 index_or_vertex_count;
             non_indexed_indirect_draw_commands[indirect_draw_command_index].instance_count =
-                total_instance_count;
+                instance_count;
             non_indexed_indirect_draw_commands[indirect_draw_command_index].vertex_offset =
                 first_index_or_vertex_offset;
             non_indexed_indirect_draw_commands[indirect_draw_command_index].base_instance =

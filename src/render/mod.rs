@@ -2906,8 +2906,12 @@ impl EffectsMeta {
             render_batch_metadata_buffer: UniformBuffer::default(),
             render_batch_effect_index_buffer: RawBufferVec::new(BufferUsages::STORAGE),
             render_batch_descriptor_buffer: BufferVec::new(BufferUsages::STORAGE),
-            indexed_indirect_draw_command_buffer: RawBufferVec::new(BufferUsages::STORAGE),
-            non_indexed_indirect_draw_command_buffer: RawBufferVec::new(BufferUsages::STORAGE),
+            indexed_indirect_draw_command_buffer: RawBufferVec::new(
+                BufferUsages::STORAGE | BufferUsages::INDIRECT,
+            ),
+            non_indexed_indirect_draw_command_buffer: RawBufferVec::new(
+                BufferUsages::STORAGE | BufferUsages::INDIRECT,
+            ),
             gpu_limits,
             indirect_shader_noevent,
             indirect_shader_events,
@@ -4487,8 +4491,6 @@ pub(crate) fn batch_effects(
         //     continue;
         // }
 
-        let translation = input.position;
-
         // Spawn one EffectBatch per instance (no batching; TODO). This contains
         // most of the data needed to drive rendering. However this doesn't drive
         // rendering; this is just storage.
@@ -4504,6 +4506,7 @@ pub(crate) fn batch_effects(
                 binding_size: cp.binding_size,
             }),
             cached_properties.map(|cp| cp.offset),
+            *main_entity,
         );
 
         // If the batch has ribbons, we need to sort the particles by RIBBON_ID and AGE
@@ -4595,13 +4598,6 @@ pub(crate) fn batch_effects(
 
         // Spawn an EffectDrawBatch, to actually drive rendering.
         // TODO: Move this to render batch construction below!
-        commands
-            .spawn(EffectDrawBatch {
-                effect_batch_index,
-                translation,
-                main_entity: *main_entity,
-            })
-            .insert(TemporaryRenderEntity);
     }
 
     debug_assert!(sorted_effect_batches.dispatch_queue_index.is_none());
@@ -4682,18 +4678,34 @@ pub(crate) fn batch_effects(
         let last_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
 
+        let indirect_draw_command_offset = indirect_draw_command_offset.unwrap_or_default();
+
         effects_meta
             .render_batch_descriptor_buffer
             .push(GpuRenderBatchDescriptor {
                 first_batch_effect_index_offset,
                 last_batch_effect_index_offset,
-                indirect_draw_command_offset: indirect_draw_command_offset.unwrap_or_default(),
+                indirect_draw_command_offset,
                 mesh_is_indexed: if cached_mesh_location.indexed.is_some() {
                     1
                 } else {
                     0
                 },
             });
+
+        let Some(first_effect_batch) = sorted_effect_batches.get(effect_render_batch[0]) else {
+            continue;
+        };
+
+        commands
+            .spawn(EffectDrawBatch {
+                representative_effect_batch_index: effect_render_batch[0],
+                representative_translation: first_effect_batch.position,
+                representative_main_entity: first_effect_batch.main_entity,
+                indirect_draw_command_range: indirect_draw_command_offset
+                    ..(indirect_draw_command_offset + effect_render_batch.len() as u32),
+            })
+            .insert(TemporaryRenderEntity);
     }
 
     let total_batch_count = effects_meta.total_render_batch_count;
@@ -5397,11 +5409,12 @@ fn emit_sorted_draw<T, F>(
             trace!(
                 "Process draw batch: draw_entity={:?} effect_batch_index={:?}",
                 draw_entity,
-                draw_batch.effect_batch_index,
+                draw_batch.representative_effect_batch_index,
             );
 
             // Get the EffectBatches this EffectDrawBatch is part of.
-            let Some(effect_batch) = sorted_effect_batches.get(draw_batch.effect_batch_index)
+            let Some(effect_batch) =
+                sorted_effect_batches.get(draw_batch.representative_effect_batch_index)
             else {
                 continue;
             };
@@ -5583,13 +5596,14 @@ fn emit_binned_draw<T, F, G>(
             let _span_draw = bevy::log::info_span!("draw_batch").entered();
 
             trace!(
-                "Process draw batch: draw_entity={:?} effect_batch_index={:?}",
+                "Process draw batch: draw_entity={:?} representative_effect_batch_index={:?}",
                 draw_entity,
-                draw_batch.effect_batch_index,
+                draw_batch.representative_effect_batch_index,
             );
 
             // Get the EffectBatches this EffectDrawBatch is part of.
-            let Some(effect_batch) = sorted_effect_batches.get(draw_batch.effect_batch_index)
+            let Some(effect_batch) =
+                sorted_effect_batches.get(draw_batch.representative_effect_batch_index)
             else {
                 continue;
             };
@@ -5610,6 +5624,8 @@ fn emit_binned_draw<T, F, G>(
                 continue;
             }
 
+            // FIXME: Reenable.
+            /*
             // Check if batch contains any entity visible in the current view. Otherwise we
             // can skip the entire batch. Note: This is O(n^2) but (unlike
             // the Sprite renderer this is inspired from) we don't expect more than
@@ -5628,6 +5644,7 @@ fn emit_binned_draw<T, F, G>(
             }
             #[cfg(feature = "trace")]
             _span_check_vis.exit();
+            */
 
             // Create and cache the bind group layout for this texture layout
             render_pipeline.cache_material(&effect_batch.texture_layout);
@@ -5710,7 +5727,7 @@ fn emit_binned_draw<T, F, G>(
             render_phase.add(
                 make_batch_set_key(render_pipeline_id, draw_batch, view),
                 make_bin_key(),
-                (draw_entity, draw_batch.main_entity),
+                (draw_entity, draw_batch.representative_main_entity),
                 InputUniformIndex::default(),
                 BinnedRenderPhaseType::NonMesh,
                 *change_tick,
@@ -5804,7 +5821,7 @@ pub(crate) fn queue_effects(
                 &render_meshes,
                 &pipeline_cache,
                 |id, entity, draw_batch, _view| Transparent2d {
-                    sort_key: FloatOrd(draw_batch.translation.z),
+                    sort_key: FloatOrd(draw_batch.representative_translation.z),
                     entity,
                     pipeline: id,
                     draw_function: draw_effects_function_2d,
@@ -5848,7 +5865,7 @@ pub(crate) fn queue_effects(
                 |id, entity, batch, view| Transparent3d {
                     distance: view
                         .rangefinder3d()
-                        .distance_translation(&batch.translation),
+                        .distance_translation(&batch.representative_translation),
                     pipeline: id,
                     entity,
                     draw_function: draw_effects_function_3d,
@@ -6552,7 +6569,7 @@ fn draw<'w>(
     let mesh_allocator = mesh_allocator.into_inner();
     let effect_draw_batch = effect_draw_batches.get(entity.0).unwrap();
     let effect_batch = sorted_effect_batches
-        .get(effect_draw_batch.effect_batch_index)
+        .get(effect_draw_batch.representative_effect_batch_index)
         .unwrap();
 
     let gpu_limits = &effects_meta.gpu_limits;
@@ -6631,43 +6648,53 @@ fn draw<'w>(
         }
     }
 
-    let effect_metadata_index = effect_batch
-        .dispatch_buffer_indices
-        .effect_metadata_buffer_table_id
-        .0;
-    let effect_metadata_offset =
-        effect_metadata_index as u64 * gpu_limits.effect_metadata_aligned_size.get() as u64;
     trace!(
-        "Draw up to {} particles with {} vertices per particle for batch from buffer #{} \
-            (effect_metadata_index={}, offset={}B).",
+        "Draw up to {} particles with {} vertices per particle for batch from buffer #{}.",
         effect_batch.slice.len(),
         render_mesh.vertex_count,
         effect_batch.buffer_index,
-        effect_metadata_index,
-        effect_metadata_offset,
     );
 
-    // Note: the indirect draw args are the first few fields of GpuEffectMetadata
-    let Some(indirect_buffer) = effects_meta.effect_metadata_buffer.buffer() else {
-        trace!(
-            "The metadata buffer containing the indirect draw args is not ready for batch buf=#{}. Skipping draw call.",
-            effect_batch.buffer_index,
-        );
-        return;
-    };
+    let indirect_draw_command_offset = effect_draw_batch.indirect_draw_command_range.start;
+    let indirect_draw_command_count =
+        effect_draw_batch.indirect_draw_command_range.end - indirect_draw_command_offset;
 
     match render_mesh.buffer_info {
         RenderMeshBufferInfo::Indexed { index_format, .. } => {
+            let Some(indirect_buffer) = effects_meta.indexed_indirect_draw_command_buffer.buffer()
+            else {
+                error!("The indexed indirect draw command buffer isn't ready");
+                return;
+            };
+
             let Some(index_buffer_slice) = mesh_allocator.mesh_index_slice(&effect_batch.mesh)
             else {
                 return;
             };
 
             pass.set_index_buffer(index_buffer_slice.buffer.slice(..), 0, index_format);
-            pass.draw_indexed_indirect(indirect_buffer, effect_metadata_offset);
+            pass.multi_draw_indexed_indirect(
+                indirect_buffer,
+                indirect_draw_command_offset as u64
+                    * mem::size_of::<GpuIndexedIndirectDrawCommand>() as u64,
+                indirect_draw_command_count,
+            );
         }
         RenderMeshBufferInfo::NonIndexed => {
-            pass.draw_indirect(indirect_buffer, effect_metadata_offset);
+            let Some(indirect_buffer) = effects_meta
+                .non_indexed_indirect_draw_command_buffer
+                .buffer()
+            else {
+                error!("The non-indexed indirect draw command buffer isn't ready");
+                return;
+            };
+
+            pass.multi_draw_indirect(
+                indirect_buffer,
+                indirect_draw_command_offset as u64
+                    * mem::size_of::<GpuNonIndexedIndirectDrawCommand>() as u64,
+                indirect_draw_command_count,
+            );
         }
     }
 }
