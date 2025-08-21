@@ -196,6 +196,10 @@ impl HanabiPlugin {
     }
 
     pub(crate) fn make_render_batch_shader(min_storage_buffer_offset_alignment: u32) -> Shader {
+        let render_effect_indirect_size =
+            GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
+        let render_effect_indirect_stride_code =
+            (render_effect_indirect_size.get() as u32).to_wgsl_string();
         let indirect_code = include_str!("render/vfx_render_batch.wgsl").replace(
             "{{EFFECT_METADATA_STRIDE}}",
             &render_effect_indirect_stride_code,

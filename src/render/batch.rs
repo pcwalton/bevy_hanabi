@@ -306,6 +306,7 @@ impl EffectBatch {
         cached_mesh: &CachedMesh,
         cached_effect_events: Option<&CachedEffectEvents>,
         cached_child_info: Option<&CachedChildInfo>,
+        cached_mesh_location: Option<&CachedMeshLocation>,
         input: &mut BatchInput,
         dispatch_buffer_indices: DispatchBufferIndices,
         property_key: Option<PropertyBindGroupKey>,
@@ -352,6 +353,7 @@ impl EffectBatch {
             alpha_mode: input.alpha_mode,
             entities: vec![input.main_entity.id().index()],
             cached_effect_events: cached_effect_events.cloned(),
+            cached_mesh_location: cached_mesh_location.cloned(),
             sort_fill_indirect_dispatch_index: None, // set later as needed
         }
     }

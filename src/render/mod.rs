@@ -838,11 +838,11 @@ pub(crate) struct RenderBatchPipelineKey;
 impl SpecializedComputePipeline for RenderBatchPipeline {
     type Key = RenderBatchPipelineKey;
 
-    fn specialize(&self, key: Self::Key) -> ComputePipelineDescriptor {
+    fn specialize(&self, _: Self::Key) -> ComputePipelineDescriptor {
         trace!("Specializing render batch pipeline");
 
         ComputePipelineDescriptor {
-            label: Some("hanabi:compute_pipeline:render_batch"),
+            label: Some("hanabi:compute_pipeline:render_batch".into()),
             layout: vec![self.bind_group_layout.clone()],
             shader: self.shader.clone(),
             shader_defs: vec![],
@@ -4393,7 +4393,7 @@ pub(crate) fn prepare_effects(
 
 pub(crate) fn batch_effects(
     mut commands: Commands,
-    effects_meta: Res<EffectsMeta>,
+    mut effects_meta: ResMut<EffectsMeta>,
     mut sort_bind_groups: ResMut<SortBindGroups>,
     mut q_cached_effects: Query<(
         Entity,
@@ -4493,6 +4493,7 @@ pub(crate) fn batch_effects(
             cached_mesh,
             cached_effect_events,
             cached_child_info,
+            cached_mesh_location,
             &mut input,
             *dispatch_buffer_indices.as_ref(),
             cached_properties.map(|cp| PropertyBindGroupKey {
@@ -4643,12 +4644,12 @@ pub(crate) fn batch_effects(
             .slice
             .start;
         let indirect_draw_command_offset = match cached_mesh_location.indexed {
-            Some(index_slice) => effects_meta.indexed_indirect_draw_command_buffer.push(
+            Some(_) => effects_meta.indexed_indirect_draw_command_buffer.push(
                 GpuIndexedIndirectDrawCommand {
                     index_count: cached_mesh_location.vertex_or_index_count,
                     instance_count: 0,
                     first_index: cached_mesh_location.first_index_or_vertex_offset,
-                    vertex_offset: cached_mesh_location.vertex_offset_or_base_instance,
+                    vertex_offset: cached_mesh_location.vertex_offset_or_base_instance as u32,
                     base_instance,
                 },
             ) as u32,
@@ -4664,15 +4665,14 @@ pub(crate) fn batch_effects(
 
         let first_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
-        for &effect_batch_index in &effect_render_batches {
+        for &effect_batch_index in &effect_render_batch {
             effects_meta
                 .render_batch_effect_index_buffer
-                .push(effect_batch_index);
+                .push(effect_batch_index.0);
         }
         let last_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
 
-        // TODO: Fill this in.
         effects_meta
             .render_batch_descriptor_buffer
             .push(GpuRenderBatchDescriptor {
@@ -4687,11 +4687,10 @@ pub(crate) fn batch_effects(
             });
     }
 
+    let total_batch_count = effects_meta.total_render_batch_count;
     effects_meta
         .render_batch_metadata_buffer
-        .set(GpuRenderBatchMetadata {
-            total_batch_count: effects_meta.total_render_batch_count,
-        });
+        .set(GpuRenderBatchMetadata { total_batch_count });
 }
 
 /// Per-buffer bind groups for a GPU effect buffer.
@@ -7405,8 +7404,8 @@ impl Node for VfxSimulateNode {
             }
 
             const WORKGROUP_SIZE: u32 = 64;
-            let total_effect_batch_count = effects_meta.effect_batch_count;
-            let workgroup_count = total_effect_batch_count.div_ceil(WORKGROUP_SIZE);
+            let total_render_batch_count = effects_meta.total_render_batch_count;
+            let workgroup_count = total_render_batch_count.div_ceil(WORKGROUP_SIZE);
 
             compute_pass.set_bind_group(
                 0,
