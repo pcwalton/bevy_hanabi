@@ -4623,9 +4623,6 @@ pub(crate) fn batch_effects(
             effect_batch_index,
             entity,
         );
-
-        // Spawn an EffectDrawBatch, to actually drive rendering.
-        // TODO: Move this to render batch construction below!
     }
 
     debug_assert!(sorted_effect_batches.dispatch_queue_index.is_none());
@@ -4653,6 +4650,10 @@ pub(crate) fn batch_effects(
         .clear();
 
     // Rebuild the render batch buffers.
+    println!(
+        "have {} effect render batch(es)",
+        effect_render_batches.len()
+    );
     for (_, effect_render_batch) in effect_render_batches {
         effects_meta.total_render_batch_count += 1;
 
@@ -4708,21 +4709,25 @@ pub(crate) fn batch_effects(
 
         let indirect_draw_command_offset = indirect_draw_command_offset.unwrap_or_default();
 
-        let render_batch_descriptor_index =
-            effects_meta
-                .render_batch_descriptor_buffer
-                .push(GpuRenderBatchDescriptor {
-                    first_batch_effect_index_offset,
-                    last_batch_effect_index_offset,
-                    indirect_draw_command_offset,
-                    mesh_is_indexed: if cached_mesh_location.indexed.is_some() {
-                        1
-                    } else {
-                        0
-                    },
-                });
+        let render_batch_descriptor = GpuRenderBatchDescriptor {
+            first_batch_effect_index_offset,
+            last_batch_effect_index_offset,
+            indirect_draw_command_offset,
+            mesh_is_indexed: if cached_mesh_location.indexed.is_some() {
+                1
+            } else {
+                0
+            },
+        };
+
+        println!("render batch descriptor={render_batch_descriptor:?}");
+
+        let render_batch_descriptor_index = effects_meta
+            .render_batch_descriptor_buffer
+            .push(render_batch_descriptor);
 
         let Some(first_effect_batch) = sorted_effect_batches.get(effect_render_batch[0]) else {
+            error!("First effect batch not present");
             continue;
         };
 
@@ -4736,6 +4741,7 @@ pub(crate) fn batch_effects(
                 render_batch_descriptor_index: render_batch_descriptor_index as u32,
             })
             .insert(TemporaryRenderEntity);
+        println!("spawning effect draw batch");
     }
 
     let total_batch_count = effects_meta.total_render_batch_count;
@@ -5465,16 +5471,19 @@ fn emit_sorted_draw<T, F>(
             #[cfg(feature = "trace")]
             let _span_draw = bevy::log::info_span!("draw_batch").entered();
 
-            trace!(
+            println!(
                 "Process draw batch: draw_entity={:?} effect_batch_index={:?}",
-                draw_entity,
-                draw_batch.representative_effect_batch_index,
+                draw_entity, draw_batch.representative_effect_batch_index,
             );
 
             // Get the EffectBatches this EffectDrawBatch is part of.
             let Some(effect_batch) =
                 sorted_effect_batches.get(draw_batch.representative_effect_batch_index)
             else {
+                error!(
+                    "Failed to get representative effect batch index {:?}",
+                    draw_batch.representative_effect_batch_index
+                );
                 continue;
             };
 
@@ -5491,6 +5500,7 @@ fn emit_sorted_draw<T, F>(
                 .intersects(LayoutFlags::USE_ALPHA_MASK | LayoutFlags::OPAQUE)
             {
                 trace!("Non-transparent batch. Skipped.");
+                warn!("Non-transparent batch. Skipped.");
                 continue;
             }
 
@@ -5502,7 +5512,7 @@ fn emit_sorted_draw<T, F>(
             // TODO - Profile to confirm.
             #[cfg(feature = "trace")]
             let _span_check_vis = bevy::log::info_span!("check_visibility").entered();
-            let has_visible_entity = effect_batch
+            /*let has_visible_entity = effect_batch
                 .entities
                 .iter()
                 .any(|index| view_entities.contains(*index as usize));
@@ -5510,6 +5520,7 @@ fn emit_sorted_draw<T, F>(
                 trace!("No visible entity for view, not emitting any draw call.");
                 continue;
             }
+            */
             #[cfg(feature = "trace")]
             _span_check_vis.exit();
 
@@ -5537,7 +5548,7 @@ fn emit_sorted_draw<T, F>(
             // FIXME - Maybe it's better to copy the mesh layout into the batch, instead of
             // re-querying here...?
             let Some(render_mesh) = render_meshes.get(effect_batch.mesh) else {
-                trace!("Batch has no render mesh, skipped.");
+                warn!("Batch has no render mesh, skipped.");
                 continue;
             };
             let mesh_layout = render_mesh.layout.clone();
@@ -6701,6 +6712,10 @@ fn draw<'w>(
     };
     let batch_descriptor_offset =
         effect_draw_batch.render_batch_descriptor_index * batch_descriptor_size;
+    println!(
+        "batch_descriptor_offset={:?} render_batch_descriptor_index={:?}",
+        batch_descriptor_offset, effect_draw_batch.render_batch_descriptor_index
+    );
     pass.set_bind_group(
         2,
         &metadata_bind_group.bind_group,
@@ -6747,14 +6762,20 @@ fn draw<'w>(
 
             let Some(index_buffer_slice) = mesh_allocator.mesh_index_slice(&effect_batch.mesh)
             else {
+                error!("Couldn't get mesh index slice");
                 return;
             };
 
+            let indirect_draw_command_byte_offset = indirect_draw_command_offset as u64
+                * mem::size_of::<GpuIndexedIndirectDrawCommand>() as u64;
+            println!(
+                "multi_draw_indexed_indirect({}, {})",
+                indirect_draw_command_byte_offset, indirect_draw_command_count
+            );
             pass.set_index_buffer(index_buffer_slice.buffer.slice(..), 0, index_format);
             pass.multi_draw_indexed_indirect(
                 indirect_buffer,
-                indirect_draw_command_offset as u64
-                    * mem::size_of::<GpuIndexedIndirectDrawCommand>() as u64,
+                indirect_draw_command_byte_offset,
                 indirect_draw_command_count,
             );
         }
@@ -6767,6 +6788,7 @@ fn draw<'w>(
                 return;
             };
 
+            println!("multi_draw_indirect");
             pass.multi_draw_indirect(
                 indirect_buffer,
                 indirect_draw_command_offset as u64
