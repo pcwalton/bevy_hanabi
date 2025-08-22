@@ -32,8 +32,8 @@ use crate::{
         prepare_property_buffers, queue_effects, queue_init_fill_dispatch_ops, resolve_parents,
         update_mesh_locations, DebugSettings, DispatchIndirectPipeline, DrawEffects,
         EffectAssetEvents, EffectBindGroups, EffectCache, EffectsMeta, EventCache,
-        ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuSpawnerParams,
-        InitFillDispatchQueue, ParticlesInitPipeline, ParticlesRenderPipeline,
+        ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuRenderBatchDescriptor,
+        GpuSpawnerParams, InitFillDispatchQueue, ParticlesInitPipeline, ParticlesRenderPipeline,
         ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache, RenderBatchPipeline,
         RenderDebugSettings, ShaderCache, SimParams, SortBindGroups, SortedEffectBatches,
         StorageType as _, UtilsPipeline, VfxSimulateDriverNode, VfxSimulateNode,
@@ -146,10 +146,16 @@ impl HanabiPlugin {
             GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
         let effect_metadata_stride_code =
             (render_effect_indirect_size.get() as u32).to_wgsl_string();
+        let batch_descriptor_padding_code =
+            GpuRenderBatchDescriptor::padding_code(min_storage_buffer_offset_alignment);
         let common_code = include_str!("render/vfx_common.wgsl")
             .replace("{{SPAWNER_PADDING}}", &spawner_padding_code)
             .replace("{{EFFECT_METADATA_PADDING}}", &effect_metadata_padding_code)
-            .replace("{{EFFECT_METADATA_STRIDE}}", &effect_metadata_stride_code);
+            .replace("{{EFFECT_METADATA_STRIDE}}", &effect_metadata_stride_code)
+            .replace(
+                "{{BATCH_DESCRIPTOR_PADDING}}",
+                &batch_descriptor_padding_code,
+            );
         Shader::from_wgsl(
             common_code,
             std::path::Path::new(file!())

@@ -201,6 +201,8 @@ struct BatchDescriptor {
     indirect_draw_command_offset: u32,
     /// 1 if the mesh is indexed or 0 if it isn't.
     mesh_is_indexed: u32,
+
+    {{BATCH_DESCRIPTOR_PADDING}}
 }
 
 struct IndexedIndirectDrawCommand {

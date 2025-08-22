@@ -469,7 +469,7 @@ struct GpuRenderBatchMetadata {
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
-struct GpuRenderBatchDescriptor {
+pub(crate) struct GpuRenderBatchDescriptor {
     first_batch_effect_index_offset: u32,
     last_batch_effect_index_offset: u32,
     indirect_draw_command_offset: u32,
@@ -1785,6 +1785,7 @@ impl FromWorld for RenderBatchPipeline {
 
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
         let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
+        let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
         let bind_group_layout_entries = [
             // @group(0) @binding(0) var<uniform> batch_metadata :
@@ -1807,7 +1808,7 @@ impl FromWorld for RenderBatchPipeline {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(GpuRenderBatchDescriptor::min_size()),
+                    min_binding_size: Some(batch_descriptor_size),
                 },
                 count: None,
             },
@@ -1977,6 +1978,7 @@ impl FromWorld for ParticlesRenderPipeline {
 
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
         let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
+        let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
         let effect_metadata_bind_group_layout = render_device.create_bind_group_layout(
             "hanabi:bind_group_layout:render:effect_metadata",
@@ -2001,8 +2003,7 @@ impl FromWorld for ParticlesRenderPipeline {
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: true,
-                        // FIXME: This is probably going to require padding...
-                        min_binding_size: Some(GpuRenderBatchDescriptor::min_size()),
+                        min_binding_size: Some(batch_descriptor_size),
                     },
                     count: None,
                 },
@@ -2868,7 +2869,7 @@ pub struct EffectsMeta {
     total_render_batch_count: u32,
     render_batch_metadata_buffer: UniformBuffer<GpuRenderBatchMetadata>,
     render_batch_effect_index_buffer: RawBufferVec<u32>,
-    render_batch_descriptor_buffer: BufferVec<GpuRenderBatchDescriptor>,
+    render_batch_descriptor_buffer: AlignedBufferVec<GpuRenderBatchDescriptor>,
     indexed_indirect_draw_command_buffer: RawBufferVec<GpuIndexedIndirectDrawCommand>,
     non_indexed_indirect_draw_command_buffer: RawBufferVec<GpuNonIndexedIndirectDrawCommand>,
     /// Various GPU limits and aligned sizes lazily allocated and cached for
@@ -2928,7 +2929,11 @@ impl EffectsMeta {
             total_render_batch_count: 0,
             render_batch_metadata_buffer: UniformBuffer::default(),
             render_batch_effect_index_buffer: RawBufferVec::new(BufferUsages::STORAGE),
-            render_batch_descriptor_buffer: BufferVec::new(BufferUsages::STORAGE),
+            render_batch_descriptor_buffer: AlignedBufferVec::new(
+                BufferUsages::STORAGE,
+                NonZeroU64::new(item_align),
+                Some("hanabi:buffer:render_batch_descriptor".to_string()),
+            ),
             indexed_indirect_draw_command_buffer: RawBufferVec::new(
                 BufferUsages::STORAGE | BufferUsages::INDIRECT,
             ),
@@ -4663,7 +4668,7 @@ pub(crate) fn batch_effects(
         let mut indirect_draw_command_offset = None;
         for &effect_batch_index in &effect_render_batch {
             let base_instance = sorted_effect_batches
-                .get(effect_render_batch[effect_batch_index.0 as usize])
+                .get(effect_batch_index)
                 .unwrap()
                 .slice
                 .start;
@@ -4753,7 +4758,7 @@ pub(crate) fn prepare_late_gpu_resources(
         &render_device,
         &render_queue,
     );
-    ensure_buffer_nonempty_and_write(
+    ensure_aligned_buffer_nonempty_and_write(
         &mut effects_meta.render_batch_descriptor_buffer,
         &render_device,
         &render_queue,
@@ -4769,12 +4774,12 @@ pub(crate) fn prepare_late_gpu_resources(
         &render_queue,
     );
 
-    fn ensure_buffer_nonempty_and_write<T>(
-        buffer: &mut BufferVec<T>,
+    fn ensure_aligned_buffer_nonempty_and_write<T>(
+        buffer: &mut AlignedBufferVec<T>,
         render_device: &RenderDevice,
         render_queue: &RenderQueue,
     ) where
-        T: ShaderType + WriteInto + Default,
+        T: Pod + ShaderSize + Default,
     {
         if buffer.is_empty() {
             buffer.push(T::default());
@@ -5316,6 +5321,9 @@ impl EffectBindGroups {
                 as u32,
         };
 
+        let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
+        let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
+
         let make_entry = || {
             // @group(3) @binding(0) var<storage, read> effect_metadata :
             // EffectMetadata;
@@ -5341,7 +5349,7 @@ impl EffectBindGroups {
                         resource: BindingResource::Buffer(BufferBinding {
                             buffer: batch_descriptor_buffer,
                             offset: 0,
-                            size: Some(GpuRenderBatchDescriptor::min_size()),
+                            size: Some(batch_descriptor_size),
                         }),
                     },
                     // @group(2) @binding(2) var<storage, read>
@@ -6631,6 +6639,13 @@ fn draw<'w>(
         .get(effect_draw_batch.representative_effect_batch_index)
         .unwrap();
 
+    let storage_alignment = world
+        .resource::<RenderDevice>()
+        .limits()
+        .min_storage_buffer_offset_alignment;
+    let batch_descriptor_size =
+        u64::from(GpuRenderBatchDescriptor::aligned_size(storage_alignment)) as u32;
+
     let Some(pipeline) = pipeline_cache.into_inner().get_render_pipeline(pipeline_id) else {
         return;
     };
@@ -6684,8 +6699,8 @@ fn draw<'w>(
         );
         return;
     };
-    let batch_descriptor_offset = effect_draw_batch.render_batch_descriptor_index
-        * u64::from(GpuRenderBatchDescriptor::min_size()) as u32;
+    let batch_descriptor_offset =
+        effect_draw_batch.render_batch_descriptor_index * batch_descriptor_size;
     pass.set_bind_group(
         2,
         &metadata_bind_group.bind_group,

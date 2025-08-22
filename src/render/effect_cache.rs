@@ -1135,6 +1135,7 @@ fn create_metadata_update_bind_group_layout(
 fn create_metadata_render_bind_group_layout(render_device: &RenderDevice) -> BindGroupLayout {
     let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
     let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
+    let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
     trace!("Creating particle bind group layout for render.",);
     render_device.create_bind_group_layout(
@@ -1162,8 +1163,7 @@ fn create_metadata_render_bind_group_layout(render_device: &RenderDevice) -> Bin
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: true,
-                    // FIXME: This is probably going to require padding...
-                    min_binding_size: Some(GpuRenderBatchDescriptor::min_size()),
+                    min_binding_size: Some(batch_descriptor_size),
                 },
                 count: None,
             },
