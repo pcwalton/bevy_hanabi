@@ -18,8 +18,8 @@ use super::{buffer_table::BufferTableId, BufferBindingSource};
 use crate::{
     asset::EffectAsset,
     render::{
-        calc_hash, event::GpuChildInfo, GpuEffectMetadata, GpuSpawnerParams, LayoutFlags,
-        StorageType as _, INDIRECT_INDEX_SIZE,
+        calc_hash, event::GpuChildInfo, GpuEffectMetadata, GpuRenderBatchDescriptor,
+        GpuSpawnerParams, LayoutFlags, StorageType as _, INDIRECT_INDEX_SIZE,
     },
     ParticleLayout,
 };
@@ -1136,24 +1136,50 @@ fn create_metadata_render_bind_group_layout(render_device: &RenderDevice) -> Bin
     let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
     let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
 
-    // @group(2) @binding(0) var<storage, read> effect_metadata :
-    // EffectMetadata;
-
     trace!("Creating particle bind group layout for render.",);
     render_device.create_bind_group_layout(
         "hanabi:bind_group_layout:render",
-        &[BindGroupLayoutEntry {
-            binding: 0,
-            visibility: ShaderStages::VERTEX,
-            ty: BindingType::Buffer {
-                ty: BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                // This WGSL struct is manually padded, so the Rust type GpuEffectMetadata doesn't
-                // reflect its true min size.
-                min_binding_size: Some(effect_metadata_size),
+        &[
+            // @group(2) @binding(0) var<storage, read_write> effect_metadata :
+            // EffectMetadata;
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    // This WGSL struct is manually padded, so the Rust type GpuEffectMetadata doesn't
+                    // reflect its true min size.
+                    min_binding_size: Some(effect_metadata_size),
+                },
+                count: None,
             },
-            count: None,
-        }],
+            // @group(2) @binding(1) var<storage, read> batch_descriptor :
+            // BatchDescriptor;
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: true,
+                    // FIXME: This is probably going to require padding...
+                    min_binding_size: Some(GpuRenderBatchDescriptor::min_size()),
+                },
+                count: None,
+            },
+            // @group(2) @binding(2) var<storage, read> batch_effect_indices :
+            // array<u32>;
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(u32::min_size()),
+                },
+                count: None,
+            },
+        ],
     )
 }
 

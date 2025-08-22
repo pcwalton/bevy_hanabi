@@ -1,6 +1,6 @@
 #import bevy_render::view::View
 #import bevy_hanabi::vfx_common::{
-    EffectMetadata, IndirectBuffer, SimParams, Spawner,
+    BatchDescriptor, EffectMetadata, IndirectBuffer, SimParams, Spawner,
     seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
     rand_normal_f, rand_normal_vec2, rand_normal_vec3, rand_normal_vec4, proj
@@ -27,7 +27,6 @@ struct VertexOutput {
     @location(3) particle_index: u32,
 #endif
 }
-
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<uniform> sim_params : SimParams;
 
@@ -36,7 +35,9 @@ struct VertexOutput {
 @group(1) @binding(2) var<storage, read> spawners : array<Spawner>;
 
 // "metadata" group @2
-@group(2) @binding(0) var<storage, read> effect_metadata : EffectMetadata;
+@group(2) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
+@group(2) @binding(1) var<storage, read> batch_descriptor : BatchDescriptor;
+@group(2) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
 
 {{MATERIAL_BINDINGS}}
 
@@ -151,13 +152,33 @@ fn vertex(
     // @location(1) vertex_color: u32,
     // @location(1) vertex_velocity: vec3<f32>,
 ) -> VertexOutput {
+    var out: VertexOutput;
+
+    var effect_metadata_index = 0u;
+    var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
+    while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
+        effect_metadata_index = batch_effect_indices[effect_index_offset];
+        let base_instance = effect_metadata[effect_metadata_index].base_instance;
+        let instance_count = atomicLoad(&effect_metadata[effect_metadata_index].instance_count);
+        if (instance_index < base_instance) {
+            out.position = vec4(0.0);
+            return out;
+        }
+        if (instance_index < base_instance + instance_count) {
+            break;
+        }
+        effect_index_offset += 1u;
+    }
+    if (effect_index_offset == batch_descriptor.last_batch_effect_index_offset) {
+        out.position = vec4(0.0);
+        return out;
+    }
+
     // Fetch particle
-    let spawner_index = effect_metadata.spawner_index;
+    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
     let pong = spawners[spawner_index].render_pong;
     let particle_index = indirect_buffer.indices[3u * instance_index + pong];
     var particle = particle_buffer.particles[particle_index];
-
-    var out: VertexOutput;
 
 #ifdef NEEDS_PARTICLE_FRAGMENT
     out.particle_index = particle_index;
@@ -165,7 +186,7 @@ fn vertex(
 
 #ifdef RIBBONS
     // Discard first instance; we draw from second one, and link to previous one
-    if (instance_index == effect_metadata.base_instance) {
+    if (instance_index == effect_metadata[effect_metadata_index].base_instance) {
         out.position = vec4(0.0);
         return out;
     }

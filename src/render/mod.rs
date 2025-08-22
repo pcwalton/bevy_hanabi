@@ -1981,16 +1981,39 @@ impl FromWorld for ParticlesRenderPipeline {
         let effect_metadata_bind_group_layout = render_device.create_bind_group_layout(
             "hanabi:bind_group_layout:render:effect_metadata",
             &[
-                // @group(2) @binding(0) var<storage, read> effect_metadata : EffectMetadata;
+                // @group(2) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
                 BindGroupLayoutEntry {
                     binding: 0,
                     visibility: ShaderStages::VERTEX,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
+                        ty: BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         // This WGSL struct is manually padded, so the Rust type GpuEffectMetadata doesn't
                         // reflect its true min size.
                         min_binding_size: Some(effect_metadata_size),
+                    },
+                    count: None,
+                },
+                // @group(2) @binding(1) var<storage, read> batch_descriptor : BatchDescriptor;
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: true,
+                        // FIXME: This is probably going to require padding...
+                        min_binding_size: Some(GpuRenderBatchDescriptor::min_size()),
+                    },
+                    count: None,
+                },
+                // @group(2) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(u32::min_size()),
                     },
                     count: None,
                 },
@@ -4680,18 +4703,19 @@ pub(crate) fn batch_effects(
 
         let indirect_draw_command_offset = indirect_draw_command_offset.unwrap_or_default();
 
-        effects_meta
-            .render_batch_descriptor_buffer
-            .push(GpuRenderBatchDescriptor {
-                first_batch_effect_index_offset,
-                last_batch_effect_index_offset,
-                indirect_draw_command_offset,
-                mesh_is_indexed: if cached_mesh_location.indexed.is_some() {
-                    1
-                } else {
-                    0
-                },
-            });
+        let render_batch_descriptor_index =
+            effects_meta
+                .render_batch_descriptor_buffer
+                .push(GpuRenderBatchDescriptor {
+                    first_batch_effect_index_offset,
+                    last_batch_effect_index_offset,
+                    indirect_draw_command_offset,
+                    mesh_is_indexed: if cached_mesh_location.indexed.is_some() {
+                        1
+                    } else {
+                        0
+                    },
+                });
 
         let Some(first_effect_batch) = sorted_effect_batches.get(effect_render_batch[0]) else {
             continue;
@@ -4704,6 +4728,7 @@ pub(crate) fn batch_effects(
                 representative_main_entity: first_effect_batch.main_entity,
                 indirect_draw_command_range: indirect_draw_command_offset
                     ..(indirect_draw_command_offset + effect_render_batch.len() as u32),
+                render_batch_descriptor_index: render_batch_descriptor_index as u32,
             })
             .insert(TemporaryRenderEntity);
     }
@@ -5275,6 +5300,8 @@ impl EffectBindGroups {
         render_device: &RenderDevice,
         layout: &BindGroupLayout,
         effect_metadata_buffer: &Buffer,
+        batch_descriptor_buffer: &Buffer,
+        batch_effect_indices_buffer: &Buffer,
     ) -> Result<&BindGroup, ()> {
         let DispatchBufferIndices {
             effect_metadata_buffer_table_id,
@@ -5296,14 +5323,38 @@ impl EffectBindGroups {
             let bind_group = render_device.create_bind_group(
                 "hanabi:bind_group:render:metadata@2",
                 layout,
-                &[BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: effect_metadata_buffer,
-                        offset: key.effect_metadata_offset as u64,
-                        size: Some(gpu_limits.effect_metadata_aligned_size.into()),
-                    }),
-                }],
+                &[
+                    // @group(2) @binding(0) var<storage, read> effect_metadata :
+                    // EffectMetadata;
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: effect_metadata_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    // @group(2) @binding(1) var<storage, read> batch_descriptor
+                    // : BatchDescriptor;
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: batch_descriptor_buffer,
+                            offset: 0,
+                            size: Some(GpuRenderBatchDescriptor::min_size()),
+                        }),
+                    },
+                    // @group(2) @binding(2) var<storage, read>
+                    // batch_effect_indices : array<u32>;
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: batch_effect_indices_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                ],
             );
 
             trace!(
@@ -6424,6 +6475,14 @@ pub(crate) fn prepare_bind_groups(
                     &render_device,
                     render_metadata_layout,
                     effects_meta.effect_metadata_buffer.buffer().unwrap(),
+                    effects_meta
+                        .render_batch_descriptor_buffer
+                        .buffer()
+                        .expect("Batch descriptor buffer must be present"),
+                    effects_meta
+                        .render_batch_effect_index_buffer
+                        .buffer()
+                        .expect("Batch effect index buffer must be present"),
                 )
                 .is_err()
             {
@@ -6572,8 +6631,6 @@ fn draw<'w>(
         .get(effect_draw_batch.representative_effect_batch_index)
         .unwrap();
 
-    let gpu_limits = &effects_meta.gpu_limits;
-
     let Some(pipeline) = pipeline_cache.into_inner().get_render_pipeline(pipeline_id) else {
         return;
     };
@@ -6627,7 +6684,13 @@ fn draw<'w>(
         );
         return;
     };
-    pass.set_bind_group(2, &metadata_bind_group.bind_group, &[]);
+    let batch_descriptor_offset = effect_draw_batch.render_batch_descriptor_index
+        * u64::from(GpuRenderBatchDescriptor::min_size()) as u32;
+    pass.set_bind_group(
+        2,
+        &metadata_bind_group.bind_group,
+        &[batch_descriptor_offset],
+    );
 
     // Particle texture
     // TODO = move

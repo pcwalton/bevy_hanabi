@@ -296,6 +296,7 @@ pub(crate) struct EffectDrawBatch {
     /// The main-world entity that contains this effect.
     #[allow(dead_code)]
     pub representative_main_entity: MainEntity,
+    pub render_batch_descriptor_index: u32,
 }
 
 impl EffectBatch {
