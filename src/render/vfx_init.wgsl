@@ -42,7 +42,7 @@ struct ParentParticleBuffer {
 {{PROPERTIES_BINDING}}
 
 // "metadata" group @3
-@group(3) @binding(0) var<storage, read_write> effect_metadata : EffectMetadata;
+@group(3) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 #ifdef CONSUME_GPU_SPAWN_EVENTS
 @group(3) @binding(1) var<storage, read> child_info_buffer : ChildInfoBuffer;
 @group(3) @binding(2) var<storage, read> event_buffer : EventBuffer;
@@ -54,24 +54,22 @@ struct ParentParticleBuffer {
 fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let thread_index = global_invocation_id.x;
 
-    // Cap to max number of dead particles, copied from dead_count at the end of the
-    // previous iteration, and constant during this pass (unlike dead_count).
-    let max_spawn = atomicLoad(&effect_metadata.max_spawn);
-    if (thread_index >= max_spawn) {
-        return;
-    }
-
     // Cap to the actual number of spawning requested by CPU or GPU, since compute shaders run
     // in workgroup_size(64) so more threads than needed are launched (rounded up to 64).
-    let spawner_index = effect_metadata.spawner_index;
 #ifdef CONSUME_GPU_SPAWN_EVENTS
+    let effect_metadata_index = 0;
+    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
     let event_index = thread_index;
     let global_child_index = effect_metadata.global_child_index;
     let event_count = child_info_buffer.rows[global_child_index].event_count;
     if (event_index >= u32(event_count)) {
         return;
     }
+    let indirect_particle_index = thread_index;
 #else
+    // TODO: step through render batch descriptors.
+    let effect_metadata_index = 0;
+    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
     // Cap to the actual number of spawning requested by CPU (in the case of
     // spawners) or the number of particles present in the source group (in the
     // case of cloners).
@@ -79,18 +77,26 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     if (thread_index >= spawn_count) {
         return;
     }
+    let indirect_particle_index = thread_index;
 #endif
 
+    // Cap to max number of dead particles, copied from dead_count at the end of the
+    // previous iteration, and constant during this pass (unlike dead_count).
+    let max_spawn = atomicLoad(&effect_metadata[effect_metadata_index].max_spawn);
+    if (indirect_particle_index >= max_spawn) {
+        return;
+    }
+
     // Always write into ping, read from pong
-    let write_index = effect_metadata.ping;
+    let write_index = effect_metadata[effect_metadata_index].ping;
     let read_index = 1u - write_index;
 
     // Recycle a dead particle from the destination group
-    let dead_index = atomicSub(&effect_metadata.dead_count, 1u) - 1u +
-        effect_metadata.base_instance;
+    let dead_index = atomicSub(&effect_metadata[effect_metadata_index].dead_count, 1u) - 1u +
+        effect_metadata[effect_metadata_index].base_instance;
     let particle_index = indirect_buffer.indices[3u * dead_index + 2u];
 
-    let particle_counter = atomicAdd(&effect_metadata.particle_counter, 1u);
+    let particle_counter = atomicAdd(&effect_metadata[effect_metadata_index].particle_counter, 1u);
 
     // Initialize the PRNG seed
     seed = pcg_hash(particle_index ^ spawners[spawner_index].seed);
@@ -129,11 +135,11 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 #endif
 
     // Count as alive
-    atomicAdd(&effect_metadata.alive_count, 1u);
+    atomicAdd(&effect_metadata[effect_metadata_index].alive_count, 1u);
 
     // Add to alive list
-    let instance_index = atomicAdd(&effect_metadata.instance_count, 1u) +
-        effect_metadata.base_instance;
+    let instance_index = atomicAdd(&effect_metadata[effect_metadata_index].instance_count, 1u) +
+        effect_metadata[effect_metadata_index].base_instance;
     indirect_buffer.indices[3u * instance_index + write_index] = particle_index;
 
     // Write back new particle
