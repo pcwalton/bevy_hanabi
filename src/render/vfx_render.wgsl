@@ -156,7 +156,7 @@ fn vertex(
 
     var effect_metadata_index = 0u;
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
-    while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
+    /*while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
         effect_metadata_index = batch_effect_indices[effect_index_offset];
         let base_instance = effect_metadata[effect_metadata_index].base_instance;
         let instance_count = atomicLoad(&effect_metadata[effect_metadata_index].instance_count);
@@ -172,7 +172,8 @@ fn vertex(
     if (effect_index_offset == batch_descriptor.last_batch_effect_index_offset) {
         out.position = vec4(0.0);
         return out;
-    }
+    }*/
+    effect_metadata_index = effect_index_offset;
 
     // Fetch particle
     let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
@@ -186,10 +187,10 @@ fn vertex(
 
 #ifdef RIBBONS
     // Discard first instance; we draw from second one, and link to previous one
-    if (instance_index == effect_metadata[effect_metadata_index].base_instance) {
-        out.position = vec4(0.0);
-        return out;
-    }
+    //if (instance_index == effect_metadata[effect_metadata_index].base_instance) {
+    //    out.position = vec4(0.0);
+    //    return out;
+    //}
 
     // Fetch previous particle
     let prev_index = indirect_buffer.indices[3u * (instance_index - 1u) + pong];
@@ -197,10 +198,10 @@ fn vertex(
 
     // Discard this instance if previous one is from a different ribbon. Again,
     // we draw from second one of each ribbon.
-    if (prev_particle.ribbon_id != particle.ribbon_id) {
-        out.position = vec4(0.0);
-        return out;
-    }
+    //if (prev_particle.ribbon_id != particle.ribbon_id) {
+    //    out.position = vec4(0.0);
+    //    return out;
+    //}
 #endif  // RIBBONS
 
 #ifdef NEEDS_UV

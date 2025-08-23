@@ -6773,11 +6773,17 @@ fn draw<'w>(
                 indirect_draw_command_byte_offset, indirect_draw_command_count
             );
             pass.set_index_buffer(index_buffer_slice.buffer.slice(..), 0, index_format);
-            pass.multi_draw_indexed_indirect(
+            /*pass.multi_draw_indexed_indirect(
                 indirect_buffer,
                 indirect_draw_command_byte_offset,
                 indirect_draw_command_count,
-            );
+            );*/
+            for i in 0..indirect_draw_command_count {
+                pass.draw_indexed_indirect(
+                    indirect_buffer,
+                    indirect_draw_command_byte_offset + (i as u64) * 20,
+                );
+            }
         }
         RenderMeshBufferInfo::NonIndexed => {
             let Some(indirect_buffer) = effects_meta
