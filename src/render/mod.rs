@@ -4650,10 +4650,6 @@ pub(crate) fn batch_effects(
         .clear();
 
     // Rebuild the render batch buffers.
-    println!(
-        "have {} effect render batch(es)",
-        effect_render_batches.len()
-    );
     for (_, effect_render_batch) in effect_render_batches {
         effects_meta.total_render_batch_count += 1;
 
@@ -4724,8 +4720,6 @@ pub(crate) fn batch_effects(
             },
         };
 
-        println!("render batch descriptor={render_batch_descriptor:?}");
-
         let render_batch_descriptor_index = effects_meta
             .render_batch_descriptor_buffer
             .push(render_batch_descriptor);
@@ -4745,7 +4739,6 @@ pub(crate) fn batch_effects(
                 render_batch_descriptor_index: render_batch_descriptor_index as u32,
             })
             .insert(TemporaryRenderEntity);
-        println!("spawning effect draw batch");
     }
 
     let total_batch_count = effects_meta.total_render_batch_count;
@@ -5475,7 +5468,7 @@ fn emit_sorted_draw<T, F>(
             #[cfg(feature = "trace")]
             let _span_draw = bevy::log::info_span!("draw_batch").entered();
 
-            println!(
+            trace!(
                 "Process draw batch: draw_entity={:?} effect_batch_index={:?}",
                 draw_entity, draw_batch.representative_effect_batch_index,
             );
@@ -6716,10 +6709,6 @@ fn draw<'w>(
     };
     let batch_descriptor_offset =
         effect_draw_batch.render_batch_descriptor_index * batch_descriptor_size;
-    println!(
-        "batch_descriptor_offset={:?} render_batch_descriptor_index={:?}",
-        batch_descriptor_offset, effect_draw_batch.render_batch_descriptor_index
-    );
     pass.set_bind_group(
         2,
         &metadata_bind_group.bind_group,
@@ -6772,22 +6761,12 @@ fn draw<'w>(
 
             let indirect_draw_command_byte_offset = indirect_draw_command_offset as u64
                 * mem::size_of::<GpuIndexedIndirectDrawCommand>() as u64;
-            println!(
-                "multi_draw_indexed_indirect({}, {})",
-                indirect_draw_command_byte_offset, indirect_draw_command_count
-            );
             pass.set_index_buffer(index_buffer_slice.buffer.slice(..), 0, index_format);
-            /*pass.multi_draw_indexed_indirect(
+            pass.multi_draw_indexed_indirect(
                 indirect_buffer,
                 indirect_draw_command_byte_offset,
                 indirect_draw_command_count,
-            );*/
-            for i in 0..indirect_draw_command_count {
-                pass.draw_indexed_indirect(
-                    indirect_buffer,
-                    indirect_draw_command_byte_offset + (i as u64) * 20,
-                );
-            }
+            );
         }
         RenderMeshBufferInfo::NonIndexed => {
             let Some(indirect_buffer) = effects_meta
@@ -6798,7 +6777,6 @@ fn draw<'w>(
                 return;
             };
 
-            println!("multi_draw_indirect");
             pass.multi_draw_indirect(
                 indirect_buffer,
                 indirect_draw_command_offset as u64
