@@ -1000,8 +1000,9 @@ fn create_metadata_init_bind_group_layout(
 ) -> BindGroupLayout {
     let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
     let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
+    let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
-    let mut entries = Vec::with_capacity(3);
+    let mut entries = Vec::with_capacity(5);
 
     // @group(3) @binding(0) var<storage, read_write> effect_metadata :
     // EffectMetadata;
@@ -1018,8 +1019,34 @@ fn create_metadata_init_bind_group_layout(
         count: None,
     });
 
+    // @group(3) @binding(1) var<storage, read> batch_descriptor :
+    // BatchDescriptor;
+    entries.push(BindGroupLayoutEntry {
+        binding: 1,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: true,
+            min_binding_size: Some(batch_descriptor_size),
+        },
+        count: None,
+    });
+
+    // @group(2) @binding(2) var<storage, read> batch_effect_indices :
+    // array<u32>;
+    entries.push(BindGroupLayoutEntry {
+        binding: 2,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: Some(u32::min_size()),
+        },
+        count: None,
+    });
+
     if consume_gpu_spawn_events {
-        // @group(3) @binding(1) var<storage, read> child_info_buffer : ChildInfoBuffer;
+        // @group(3) @binding(3) var<storage, read> child_info_buffer : ChildInfoBuffer;
         entries.push(BindGroupLayoutEntry {
             binding: 1,
             visibility: ShaderStages::COMPUTE,
@@ -1031,7 +1058,7 @@ fn create_metadata_init_bind_group_layout(
             count: None,
         });
 
-        // @group(3) @binding(2) var<storage, read> event_buffer : EventBuffer;
+        // @group(3) @binding(4) var<storage, read> event_buffer : EventBuffer;
         entries.push(BindGroupLayoutEntry {
             binding: 2,
             visibility: ShaderStages::COMPUTE,

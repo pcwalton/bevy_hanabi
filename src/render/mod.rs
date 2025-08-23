@@ -5073,6 +5073,8 @@ impl EffectBindGroups {
         render_device: &RenderDevice,
         layout: &BindGroupLayout,
         effect_metadata_buffer: &Buffer,
+        batch_descriptor_buffer: &Buffer,
+        batch_effect_indices_buffer: &Buffer,
         consume_event_buffers: Option<ConsumeEventBuffers>,
     ) -> Result<&BindGroup, ()> {
         let DispatchBufferIndices {
@@ -5089,22 +5091,47 @@ impl EffectBindGroups {
             consume_event_key: consume_event_buffers.as_ref().map(Into::into),
         };
 
+        let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
+        let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
+
         let make_entry = || {
-            let mut entries = Vec::with_capacity(3);
+            let mut entries = Vec::with_capacity(5);
             entries.push(
-                // @group(3) @binding(0) var<storage, read_write> effect_metadata : EffectMetadata;
+                // @group(3) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
                 BindGroupEntry {
                     binding: 0,
                     resource: BindingResource::Buffer(BufferBinding {
                         buffer: effect_metadata_buffer,
-                        offset: key.effect_metadata_offset as u64,
-                        size: Some(gpu_limits.effect_metadata_size()),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            );
+            entries.push(
+                // @group(3) @binding(1) var<storage, read_write> batch_descriptor : BatchDescriptor;
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: batch_descriptor_buffer,
+                        offset: 0,
+                        size: Some(batch_descriptor_size),
+                    }),
+                },
+            );
+            entries.push(
+                // @group(3) @binding(2) var<storage, read_write> batch_effect_indices : array<u32>;
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: batch_effect_indices_buffer,
+                        offset: 0,
+                        size: None,
                     }),
                 },
             );
             if let Some(consume_event_buffers) = consume_event_buffers.as_ref() {
                 entries.push(
-                    // @group(3) @binding(1) var<storage, read> child_info_buffer :
+                    // @group(3) @binding(3) var<storage, read> child_info_buffer :
                     // ChildInfoBuffer;
                     BindGroupEntry {
                         binding: 1,
@@ -5116,7 +5143,7 @@ impl EffectBindGroups {
                     },
                 );
                 entries.push(
-                    // @group(3) @binding(2) var<storage, read> event_buffer : EventBuffer;
+                    // @group(3) @binding(4) var<storage, read> event_buffer : EventBuffer;
                     BindGroupEntry {
                         binding: 2,
                         resource: BindingResource::Buffer(consume_event_buffers.events.into()),
@@ -5470,7 +5497,8 @@ fn emit_sorted_draw<T, F>(
 
             trace!(
                 "Process draw batch: draw_entity={:?} effect_batch_index={:?}",
-                draw_entity, draw_batch.representative_effect_batch_index,
+                draw_entity,
+                draw_batch.representative_effect_batch_index,
             );
 
             // Get the EffectBatches this EffectDrawBatch is part of.
@@ -6443,6 +6471,14 @@ pub(crate) fn prepare_bind_groups(
                     &render_device,
                     init_metadata_layout,
                     effects_meta.effect_metadata_buffer.buffer().unwrap(),
+                    effects_meta
+                        .render_batch_descriptor_buffer
+                        .buffer()
+                        .expect("Batch descriptor buffer must be present"),
+                    effects_meta
+                        .render_batch_effect_index_buffer
+                        .buffer()
+                        .expect("Batch effect index buffer must be present"),
                     consume_event_buffers,
                 )
                 .is_err()
@@ -7172,7 +7208,12 @@ impl Node for VfxSimulateNode {
                         .unwrap(),
                     &offsets[..],
                 );
-                compute_pass.set_bind_group(3, &metadata_bind_group.bind_group, &[]);
+                let batch_descriptor_offset = 0; // TODO: Actually batch these!
+                compute_pass.set_bind_group(
+                    3,
+                    &metadata_bind_group.bind_group,
+                    &[batch_descriptor_offset],
+                );
 
                 // Dispatch init job
                 match effect_batch.spawn_info {

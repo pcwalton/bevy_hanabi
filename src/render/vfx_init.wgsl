@@ -1,6 +1,6 @@
 #import bevy_hanabi::vfx_common::{
-    ChildInfo, ChildInfoBuffer, EventBuffer, IndirectDispatch, IndirectBuffer,
-    EffectMetadata, RenderGroupIndirect, SimParams, Spawner,
+    BatchDescriptor, ChildInfo, ChildInfoBuffer, EventBuffer, EffectMetadata,
+    IndirectBuffer, IndirectDispatch, RenderGroupIndirect, SimParams, Spawner,
     seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
     rand_normal_f, rand_normal_vec2, rand_normal_vec3, rand_normal_vec4, proj
@@ -43,9 +43,11 @@ struct ParentParticleBuffer {
 
 // "metadata" group @3
 @group(3) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
+@group(3) @binding(1) var<storage, read> batch_descriptor : BatchDescriptor;
+@group(3) @binding(2) var<storage, read> batch_effect_indices: array<u32>;
 #ifdef CONSUME_GPU_SPAWN_EVENTS
-@group(3) @binding(1) var<storage, read> child_info_buffer : ChildInfoBuffer;
-@group(3) @binding(2) var<storage, read> event_buffer : EventBuffer;
+@group(3) @binding(3) var<storage, read> child_info_buffer : ChildInfoBuffer;
+@group(3) @binding(4) var<storage, read> event_buffer : EventBuffer;
 #endif
 
 {{INIT_EXTRA}}
