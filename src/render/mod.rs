@@ -4700,9 +4700,13 @@ pub(crate) fn batch_effects(
         let first_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
         for &effect_batch_index in &effect_render_batch {
-            effects_meta
-                .render_batch_effect_index_buffer
-                .push(effect_batch_index.0);
+            let sorted_effect_batch = sorted_effect_batches.get(effect_batch_index).unwrap();
+            effects_meta.render_batch_effect_index_buffer.push(
+                sorted_effect_batch
+                    .dispatch_buffer_indices
+                    .effect_metadata_buffer_table_id
+                    .0,
+            );
         }
         let last_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
