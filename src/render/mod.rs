@@ -6808,6 +6808,7 @@ impl Draw<Transparent2d> for DrawEffects {
         view: Entity,
         item: &Transparent2d,
     ) -> Result<(), DrawError> {
+        /*
         trace!("Draw<Transparent2d>: view={:?}", view);
         draw(
             world,
@@ -6817,6 +6818,7 @@ impl Draw<Transparent2d> for DrawEffects {
             item.pipeline,
             &mut self.params,
         );
+        */
         Ok(())
     }
 }
