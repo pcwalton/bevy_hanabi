@@ -201,6 +201,28 @@ impl HanabiPlugin {
         )
     }
 
+    pub(crate) fn make_indirect_batch_shader(min_storage_buffer_offset_alignment: u32) -> Shader {
+        let render_effect_indirect_size =
+            GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
+        let render_effect_indirect_stride_code =
+            (render_effect_indirect_size.get() as u32).to_wgsl_string();
+        let indirect_code = include_str!("render/vfx_indirect_batch.wgsl").replace(
+            "{{EFFECT_METADATA_STRIDE}}",
+            &render_effect_indirect_stride_code,
+        );
+        Shader::from_wgsl(
+            indirect_code,
+            std::path::Path::new(file!())
+                .parent()
+                .unwrap()
+                .join(format!(
+                    "render/vfx_indirect_batch_{}.wgsl",
+                    min_storage_buffer_offset_alignment,
+                ))
+                .to_string_lossy(),
+        )
+    }
+
     pub(crate) fn make_render_batch_shader(min_storage_buffer_offset_alignment: u32) -> Shader {
         let render_effect_indirect_size =
             GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
@@ -312,6 +334,7 @@ impl Plugin for HanabiPlugin {
         let (
             indirect_shader_noevent,
             indirect_shader_events,
+            indirect_batch_shader,
             render_batch_shader,
             sort_fill_shader,
             sort_shader,
@@ -320,6 +343,7 @@ impl Plugin for HanabiPlugin {
             let align = render_device.limits().min_storage_buffer_offset_alignment;
             let indirect_shader_noevent = HanabiPlugin::make_indirect_shader(align, false);
             let indirect_shader_events = HanabiPlugin::make_indirect_shader(align, true);
+            let indirect_batch_shader = HanabiPlugin::make_indirect_batch_shader(align);
             let render_batch_shader = HanabiPlugin::make_render_batch_shader(align);
             let sort_fill_shader = Shader::from_wgsl(
                 include_str!("render/vfx_sort_fill.wgsl"),
@@ -349,6 +373,7 @@ impl Plugin for HanabiPlugin {
             let mut assets = app.world_mut().resource_mut::<Assets<Shader>>();
             let indirect_shader_noevent = assets.add(indirect_shader_noevent);
             let indirect_shader_events = assets.add(indirect_shader_events);
+            let indirect_batch_shader = assets.add(indirect_batch_shader);
             let render_batch_shader = assets.add(render_batch_shader);
             let sort_fill_shader = assets.add(sort_fill_shader);
             let sort_shader = assets.add(sort_shader);
@@ -357,6 +382,7 @@ impl Plugin for HanabiPlugin {
             (
                 indirect_shader_noevent,
                 indirect_shader_events,
+                indirect_batch_shader,
                 render_batch_shader,
                 sort_fill_shader,
                 sort_shader,
@@ -368,6 +394,7 @@ impl Plugin for HanabiPlugin {
             render_device.clone(),
             indirect_shader_noevent,
             indirect_shader_events,
+            indirect_batch_shader,
             render_batch_shader,
         );
 
