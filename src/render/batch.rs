@@ -131,6 +131,12 @@ pub(crate) struct RenderBatchKey {
 pub(crate) struct RenderBatch {
     pub(super) effect_batch_indices: Vec<EffectBatchIndex>,
     pub(super) batch_descriptor_index: u32,
+    /// The index of the [`GpuDispatchIndirect`] row in the GPU buffer
+    /// [`EffectsMeta::update_dispatch_indirect_buffer`].
+    ///
+    /// [`EffectsMeta::update_dispatch_indirect_buffer`]: super::EffectsMeta::update_dispatch_indirect_buffer
+    pub(crate) update_dispatch_indirect_buffer_row_index: u32,
+
 }
 
 impl SortedEffectBatches {

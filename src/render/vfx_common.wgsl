@@ -108,7 +108,6 @@ const EM_OFFSET_MAX_UPDATE: u32 = 6u;
 const EM_OFFSET_DEAD_COUNT: u32 = 7u;
 const EM_OFFSET_MAX_SPAWN: u32 = 8u;
 const EM_OFFSET_PING: u32 = 9u;
-const EM_OFFSET_INDIRECT_DISPATCH_INDEX: u32 = 10u;
 
 /// Draw indirect parameters for GPU-driven rendering, and additional effect data.
 struct EffectMetadata {
@@ -144,9 +143,6 @@ struct EffectMetadata {
     /// always write into the ping buffer and read from the pong buffer. The buffers
     /// are swapped (ping = 1 - ping) during the indirect dispatch.
     ping: u32,
-    /// Index of the [`GpuDispatchIndirect`] struct inside the global
-    /// [`EffectsMeta::dispatch_indirect_buffer`].
-    indirect_dispatch_index: u32,
     /// Index of the [`GpuRenderIndirect`] struct inside the global
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     indirect_render_index: u32,
