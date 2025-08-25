@@ -6,6 +6,7 @@ use bevy::{
     render::{render_resource::CachedComputePipelineId, sync_world::MainEntity},
 };
 use fixedbitset::FixedBitSet;
+use indexmap::IndexMap;
 
 use super::{
     effect_cache::{DispatchBufferIndices, EffectSlice},
@@ -113,10 +114,17 @@ pub(crate) struct SortedEffectBatches {
     /// the returned [`EffectBatchIndex`].
     ///
     /// [`push()`]: Self::push
-    batches: Vec<EffectBatch>,
+    pub(super) batches: Vec<EffectBatch>,
     /// Index of the dispatch queue used for indirect fill dispatch and
     /// submitted to [`GpuBufferOperations`].
     pub(super) dispatch_queue_index: Option<u32>,
+    pub(super) render_batches: IndexMap<RenderBatchKey, Vec<EffectBatchIndex>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct RenderBatchKey {
+    asset_id: AssetId<EffectAsset>,
+    buffer_index: u32,
 }
 
 impl SortedEffectBatches {
@@ -151,6 +159,15 @@ impl SortedEffectBatches {
             Some(&self.batches[index.0 as usize])
         } else {
             None
+        }
+    }
+}
+
+impl RenderBatchKey {
+    pub(crate) fn new(asset_id: AssetId<EffectAsset>, buffer_index: u32) -> RenderBatchKey {
+        RenderBatchKey {
+            asset_id,
+            buffer_index,
         }
     }
 }

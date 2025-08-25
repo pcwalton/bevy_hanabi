@@ -11,6 +11,7 @@ use std::{
 
 #[cfg(feature = "2d")]
 use bevy::core_pipeline::core_2d::{Transparent2d, CORE_2D_DEPTH_FORMAT};
+use bevy::ecs::entity::EntityHashSet;
 #[cfg(feature = "2d")]
 use bevy::math::FloatOrd;
 #[cfg(feature = "3d")]
@@ -24,7 +25,6 @@ use bevy::{
     },
     render::render_phase::{BinnedPhaseItem, ViewBinnedRenderPhases},
 };
-use bevy::{ecs::entity::EntityHashSet, render::render_resource::encase::private::WriteInto};
 use bevy::{
     ecs::{
         component::Tick,
@@ -61,7 +61,6 @@ use effect_cache::{BufferState, CachedEffect, EffectSlice};
 use event::{CachedChildInfo, CachedEffectEvents, CachedParentInfo, CachedParentRef, GpuChildInfo};
 use fixedbitset::FixedBitSet;
 use gpu_buffer::GpuBuffer;
-use indexmap::IndexMap;
 use naga_oil::compose::{Composer, NagaModuleDescriptor};
 
 use crate::{
@@ -70,7 +69,7 @@ use crate::{
     render::{
         batch::{
             BatchInput, EffectBatchIndex, EffectDrawBatch, EffectSorter, EffectToBeSorted,
-            InitAndUpdatePipelineIds,
+            InitAndUpdatePipelineIds, RenderBatchKey,
         },
         effect_cache::DispatchBufferIndices,
     },
@@ -4441,10 +4440,12 @@ pub(crate) fn batch_effects(
         &mut DispatchBufferIndices,
         &mut BatchInput,
     )>,
-    mut sorted_effect_batches: ResMut<SortedEffectBatches>,
+    sorted_effect_batches: ResMut<SortedEffectBatches>,
     mut gpu_buffer_operations: ResMut<GpuBufferOperations>,
 ) {
     trace!("batch_effects");
+
+    let sorted_effect_batches = sorted_effect_batches.into_inner();
 
     // Sort first by effect buffer index, then by slice range (see EffectSlice)
     // inside that buffer. This is critical for batching to work, because
@@ -4632,10 +4633,14 @@ pub(crate) fn batch_effects(
 
     // Build the render batches.
 
-    let mut effect_render_batches = IndexMap::new();
-    for (effect_batch_index, effect_batch) in sorted_effect_batches.iter().enumerate() {
-        effect_render_batches
-            .entry((effect_batch.handle.id(), effect_batch.buffer_index))
+    sorted_effect_batches.render_batches.clear();
+    for (effect_batch_index, effect_batch) in sorted_effect_batches.batches.iter().enumerate() {
+        sorted_effect_batches
+            .render_batches
+            .entry(RenderBatchKey::new(
+                effect_batch.handle.id(),
+                effect_batch.buffer_index,
+            ))
             .or_insert(vec![])
             .push(EffectBatchIndex(effect_batch_index as u32));
     }
@@ -4650,7 +4655,7 @@ pub(crate) fn batch_effects(
         .clear();
 
     // Rebuild the render batch buffers.
-    for (_, effect_render_batch) in effect_render_batches {
+    for (_, effect_render_batch) in &sorted_effect_batches.render_batches {
         effects_meta.total_render_batch_count += 1;
 
         let Some(cached_mesh_location) = sorted_effect_batches
@@ -4663,7 +4668,7 @@ pub(crate) fn batch_effects(
 
         // Push indirect draw commands.
         let mut indirect_draw_command_offset = None;
-        for &effect_batch_index in &effect_render_batch {
+        for &effect_batch_index in effect_render_batch {
             let base_instance = sorted_effect_batches
                 .get(effect_batch_index)
                 .unwrap()
@@ -4695,7 +4700,7 @@ pub(crate) fn batch_effects(
 
         let first_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
-        for &effect_batch_index in &effect_render_batch {
+        for &effect_batch_index in effect_render_batch {
             let sorted_effect_batch = sorted_effect_batches.get(effect_batch_index).unwrap();
             effects_meta.render_batch_effect_index_buffer.push(
                 sorted_effect_batch
@@ -7133,88 +7138,8 @@ impl Node for VfxSimulateNode {
                 &[],
             );
 
-            // Dispatch init compute jobs for all batches
+            // Dispatch init compute jobs for applicable effect batches
             for effect_batch in sorted_effect_batches.iter() {
-                // Do not dispatch any init work if there's nothing to spawn this frame for the
-                // batch. Note that this hopefully should have been skipped earlier.
-                {
-                    let use_indirect_dispatch = effect_batch
-                        .layout_flags
-                        .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS);
-                    match effect_batch.spawn_info {
-                        BatchSpawnInfo::CpuSpawner { total_spawn_count } => {
-                            assert!(!use_indirect_dispatch);
-                            if total_spawn_count == 0 {
-                                continue;
-                            }
-                        }
-                        BatchSpawnInfo::GpuSpawner { .. } => {
-                            assert!(use_indirect_dispatch);
-                        }
-                    }
-                }
-
-                // Fetch bind group particle@1
-                let Some(particle_bind_group) =
-                    effect_cache.particle_sim_bind_group(effect_batch.buffer_index)
-                else {
-                    error!(
-                        "Failed to find init particle@1 bind group for buffer index {}",
-                        effect_batch.buffer_index
-                    );
-                    continue;
-                };
-
-                // Fetch bind group metadata@3
-                let Some(metadata_bind_group) =
-                    effect_bind_groups
-                        .init_metadata_bind_groups
-                        .get(&EffectMetadataBindGroupKey {
-                            buffer_index: effect_batch.buffer_index,
-                            base_instance: effect_batch.slice.start,
-                        })
-                else {
-                    error!(
-                        "Failed to find init metadata@3 bind group for buffer index {}",
-                        effect_batch.buffer_index
-                    );
-                    continue;
-                };
-
-                if compute_pass
-                    .set_cached_compute_pipeline(effect_batch.init_and_update_pipeline_ids.init)
-                    .is_err()
-                {
-                    continue;
-                }
-
-                // Compute dynamic offsets
-                let spawner_base = effect_batch.spawner_base;
-                let spawner_aligned_size = effects_meta.spawner_buffer.aligned_size();
-                debug_assert!(spawner_aligned_size >= GpuSpawnerParams::min_size().get() as usize);
-                let property_offset = effect_batch.property_offset;
-
-                // Setup init pass
-                compute_pass.set_bind_group(1, particle_bind_group, &[]);
-                let offsets = if let Some(property_offset) = property_offset {
-                    vec![property_offset]
-                } else {
-                    vec![]
-                };
-                compute_pass.set_bind_group(
-                    2,
-                    property_bind_groups
-                        .get(effect_batch.property_key.as_ref())
-                        .unwrap(),
-                    &offsets[..],
-                );
-                let batch_descriptor_offset = 0; // TODO: Actually batch these!
-                compute_pass.set_bind_group(
-                    3,
-                    &metadata_bind_group.bind_group,
-                    &[batch_descriptor_offset],
-                );
-
                 // Dispatch init job
                 match effect_batch.spawn_info {
                     // Indirect dispatch via GPU spawn events
@@ -7222,6 +7147,19 @@ impl Node for VfxSimulateNode {
                         init_indirect_dispatch_index,
                         ..
                     } => {
+                        if !prepare_to_dispatch_init_job(
+                            effect_batch,
+                            &mut compute_pass,
+                            effect_cache,
+                            effect_bind_groups,
+                            property_bind_groups,
+                            effects_meta,
+                        ) {
+                            continue;
+                        }
+
+                        let spawner_base = effect_batch.spawner_base;
+
                         assert!(effect_batch
                             .layout_flags
                             .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS));
@@ -7248,15 +7186,52 @@ impl Node for VfxSimulateNode {
                             event_cache.init_indirect_dispatch_buffer().unwrap(),
                             indirect_offset,
                         );
+
+                        trace!("init compute dispatched");
                     }
 
+                    // Direct dispatch via CPU spawn count
+                    BatchSpawnInfo::CpuSpawner { .. } => {
+                        // These are handled below.
+                    }
+                }
+            }
+
+            // Dispatch init compute jobs for applicable render batches
+            for (render_batch_index, (render_batch_key, effect_batch_indices)) in
+                sorted_effect_batches.render_batches.iter().enumerate()
+            {
+                let Some(&representative_effect_batch_index) = effect_batch_indices.first() else {
+                    continue;
+                };
+                let Some(representative_effect_batch) =
+                    sorted_effect_batches.get(representative_effect_batch_index)
+                else {
+                    continue;
+                };
+
+                // Dispatch init job
+                match representative_effect_batch.spawn_info {
                     // Direct dispatch via CPU spawn count
                     BatchSpawnInfo::CpuSpawner {
                         total_spawn_count: spawn_count,
                     } => {
-                        assert!(!effect_batch
+                        assert!(!representative_effect_batch
                             .layout_flags
                             .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS));
+
+                        if !prepare_to_dispatch_init_job(
+                            representative_effect_batch,
+                            &mut compute_pass,
+                            effect_cache,
+                            effect_bind_groups,
+                            property_bind_groups,
+                            effects_meta,
+                        ) {
+                            continue;
+                        }
+
+                        let spawner_base = representative_effect_batch.spawner_base;
 
                         const WORKGROUP_SIZE: u32 = 64;
                         let workgroup_count = spawn_count.div_ceil(WORKGROUP_SIZE);
@@ -7265,18 +7240,18 @@ impl Node for VfxSimulateNode {
                             "record commands for init pipeline of effect {:?} \
                                 (spawn {} particles => {} workgroups) spawner_base={} \
                                 property_key={:?}...",
-                            effect_batch.handle,
+                            representative_effect_batch.handle,
                             spawn_count,
                             workgroup_count,
                             spawner_base,
-                            effect_batch.property_key,
+                            representative_effect_batch.property_key,
                         );
 
                         compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
                     }
-                }
 
-                trace!("init compute dispatched");
+                    BatchSpawnInfo::GpuSpawner { .. } => {}
+                }
             }
         }
 
@@ -7644,6 +7619,97 @@ impl Node for VfxSimulateNode {
 
         Ok(())
     }
+}
+
+// Returns true if the init dispatch should continue or false if it should abort.
+fn prepare_to_dispatch_init_job(
+    effect_batch: &EffectBatch,
+    compute_pass: &mut HanabiComputePass,
+    effect_cache: &EffectCache,
+    effect_bind_groups: &EffectBindGroups,
+    property_bind_groups: &PropertyBindGroups,
+    effects_meta: &EffectsMeta,
+) -> bool {
+    // Do not dispatch any init work if there's nothing to spawn this frame for the
+    // batch. Note that this hopefully should have been skipped earlier.
+    {
+        let use_indirect_dispatch = effect_batch
+            .layout_flags
+            .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS);
+        match effect_batch.spawn_info {
+            BatchSpawnInfo::CpuSpawner { total_spawn_count } => {
+                assert!(!use_indirect_dispatch);
+                if total_spawn_count == 0 {
+                    return false;
+                }
+            }
+            BatchSpawnInfo::GpuSpawner { .. } => {
+                assert!(use_indirect_dispatch);
+            }
+        }
+    }
+
+    // Fetch bind group particle@1
+    let Some(particle_bind_group) = effect_cache.particle_sim_bind_group(effect_batch.buffer_index)
+    else {
+        error!(
+            "Failed to find init particle@1 bind group for buffer index {}",
+            effect_batch.buffer_index
+        );
+        return false;
+    };
+
+    // Fetch bind group metadata@3
+    let Some(metadata_bind_group) =
+        effect_bind_groups
+            .init_metadata_bind_groups
+            .get(&EffectMetadataBindGroupKey {
+                buffer_index: effect_batch.buffer_index,
+                base_instance: effect_batch.slice.start,
+            })
+    else {
+        error!(
+            "Failed to find init metadata@3 bind group for buffer index {}",
+            effect_batch.buffer_index
+        );
+        return false;
+    };
+
+    if compute_pass
+        .set_cached_compute_pipeline(effect_batch.init_and_update_pipeline_ids.init)
+        .is_err()
+    {
+        return false;
+    }
+
+    // Compute dynamic offsets
+    let spawner_base = effect_batch.spawner_base;
+    let spawner_aligned_size = effects_meta.spawner_buffer.aligned_size();
+    debug_assert!(spawner_aligned_size >= GpuSpawnerParams::min_size().get() as usize);
+    let property_offset = effect_batch.property_offset;
+
+    // Setup init pass
+    compute_pass.set_bind_group(1, particle_bind_group, &[]);
+    let offsets = if let Some(property_offset) = property_offset {
+        vec![property_offset]
+    } else {
+        vec![]
+    };
+    compute_pass.set_bind_group(
+        2,
+        property_bind_groups
+            .get(effect_batch.property_key.as_ref())
+            .unwrap(),
+        &offsets[..],
+    );
+    let batch_descriptor_offset = 0; // TODO: Actually batch these!
+    compute_pass.set_bind_group(
+        3,
+        &metadata_bind_group.bind_group,
+        &[batch_descriptor_offset],
+    );
+
+    true
 }
 
 impl From<LayoutFlags> for ParticleRenderAlphaMaskPipelineKey {
