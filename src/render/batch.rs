@@ -118,13 +118,19 @@ pub(crate) struct SortedEffectBatches {
     /// Index of the dispatch queue used for indirect fill dispatch and
     /// submitted to [`GpuBufferOperations`].
     pub(super) dispatch_queue_index: Option<u32>,
-    pub(super) render_batches: IndexMap<RenderBatchKey, Vec<EffectBatchIndex>>,
+    pub(super) render_batches: IndexMap<RenderBatchKey, RenderBatch>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct RenderBatchKey {
     asset_id: AssetId<EffectAsset>,
     buffer_index: u32,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RenderBatch {
+    pub(super) effect_batch_indices: Vec<EffectBatchIndex>,
+    pub(super) batch_descriptor_index: u32,
 }
 
 impl SortedEffectBatches {

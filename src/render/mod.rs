@@ -4641,7 +4641,8 @@ pub(crate) fn batch_effects(
                 effect_batch.handle.id(),
                 effect_batch.buffer_index,
             ))
-            .or_insert(vec![])
+            .or_insert_with(default)
+            .effect_batch_indices
             .push(EffectBatchIndex(effect_batch_index as u32));
     }
 
@@ -4655,11 +4656,12 @@ pub(crate) fn batch_effects(
         .clear();
 
     // Rebuild the render batch buffers.
-    for (_, effect_render_batch) in &sorted_effect_batches.render_batches {
+    for (_, mut effect_render_batch) in &mut sorted_effect_batches.render_batches {
         effects_meta.total_render_batch_count += 1;
 
         let Some(cached_mesh_location) = sorted_effect_batches
-            .get(EffectBatchIndex(effect_render_batch[0].0))
+            .batches
+            .get(effect_render_batch.effect_batch_indices[0].0 as usize)
             .and_then(|effect_batch| effect_batch.cached_mesh_location.as_ref())
         else {
             error!("Couldn't find cached mesh location");
@@ -4668,9 +4670,10 @@ pub(crate) fn batch_effects(
 
         // Push indirect draw commands.
         let mut indirect_draw_command_offset = None;
-        for &effect_batch_index in effect_render_batch {
+        for &effect_batch_index in &effect_render_batch.effect_batch_indices {
             let base_instance = sorted_effect_batches
-                .get(effect_batch_index)
+                .batches
+                .get(effect_batch_index.0 as usize)
                 .unwrap()
                 .slice
                 .start;
@@ -4700,8 +4703,11 @@ pub(crate) fn batch_effects(
 
         let first_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
-        for &effect_batch_index in effect_render_batch {
-            let sorted_effect_batch = sorted_effect_batches.get(effect_batch_index).unwrap();
+        for &effect_batch_index in &effect_render_batch.effect_batch_indices {
+            let sorted_effect_batch = sorted_effect_batches
+                .batches
+                .get(effect_batch_index.0 as usize)
+                .unwrap();
             effects_meta.render_batch_effect_index_buffer.push(
                 sorted_effect_batch
                     .dispatch_buffer_indices
@@ -4725,23 +4731,28 @@ pub(crate) fn batch_effects(
             },
         };
 
-        let render_batch_descriptor_index = effects_meta
+        effect_render_batch.batch_descriptor_index = effects_meta
             .render_batch_descriptor_buffer
-            .push(render_batch_descriptor);
+            .push(render_batch_descriptor)
+            as u32;
 
-        let Some(first_effect_batch) = sorted_effect_batches.get(effect_render_batch[0]) else {
+        let Some(first_effect_batch) = sorted_effect_batches
+            .batches
+            .get(effect_render_batch.effect_batch_indices[0].0 as usize)
+        else {
             error!("First effect batch not present");
             continue;
         };
 
         commands
             .spawn(EffectDrawBatch {
-                representative_effect_batch_index: effect_render_batch[0],
+                representative_effect_batch_index: effect_render_batch.effect_batch_indices[0],
                 representative_translation: first_effect_batch.position,
                 representative_main_entity: first_effect_batch.main_entity,
                 indirect_draw_command_range: indirect_draw_command_offset
-                    ..(indirect_draw_command_offset + effect_render_batch.len() as u32),
-                render_batch_descriptor_index: render_batch_descriptor_index as u32,
+                    ..(indirect_draw_command_offset
+                        + effect_render_batch.effect_batch_indices.len() as u32),
+                render_batch_descriptor_index: effect_render_batch.batch_descriptor_index,
             })
             .insert(TemporaryRenderEntity);
     }
@@ -7087,6 +7098,11 @@ impl Node for VfxSimulateNode {
         let gpu_buffer_operations = world.resource::<GpuBufferOperations>();
         let sorted_effect_batches = world.resource::<SortedEffectBatches>();
         let init_fill_dispatch_queue = world.resource::<InitFillDispatchQueue>();
+        let render_device = world.resource::<RenderDevice>();
+
+        let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
+        let batch_descriptor_size =
+            GpuRenderBatchDescriptor::aligned_size(storage_alignment).get() as u32;
 
         // Make sure to schedule any buffer copy before accessing their content later in
         // the GPU commands below.
@@ -7149,11 +7165,13 @@ impl Node for VfxSimulateNode {
                     } => {
                         if !prepare_to_dispatch_init_job(
                             effect_batch,
+                            0,
                             &mut compute_pass,
                             effect_cache,
                             effect_bind_groups,
                             property_bind_groups,
                             effects_meta,
+                            batch_descriptor_size,
                         ) {
                             continue;
                         }
@@ -7198,10 +7216,12 @@ impl Node for VfxSimulateNode {
             }
 
             // Dispatch init compute jobs for applicable render batches
-            for (render_batch_index, (render_batch_key, effect_batch_indices)) in
+            for (render_batch_index, (render_batch_key, render_batch)) in
                 sorted_effect_batches.render_batches.iter().enumerate()
             {
-                let Some(&representative_effect_batch_index) = effect_batch_indices.first() else {
+                let Some(&representative_effect_batch_index) =
+                    render_batch.effect_batch_indices.first()
+                else {
                     continue;
                 };
                 let Some(representative_effect_batch) =
@@ -7213,20 +7233,20 @@ impl Node for VfxSimulateNode {
                 // Dispatch init job
                 match representative_effect_batch.spawn_info {
                     // Direct dispatch via CPU spawn count
-                    BatchSpawnInfo::CpuSpawner {
-                        total_spawn_count: spawn_count,
-                    } => {
+                    BatchSpawnInfo::CpuSpawner { .. } => {
                         assert!(!representative_effect_batch
                             .layout_flags
                             .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS));
 
                         if !prepare_to_dispatch_init_job(
                             representative_effect_batch,
+                            render_batch.batch_descriptor_index,
                             &mut compute_pass,
                             effect_cache,
                             effect_bind_groups,
                             property_bind_groups,
                             effects_meta,
+                            batch_descriptor_size,
                         ) {
                             continue;
                         }
@@ -7234,6 +7254,16 @@ impl Node for VfxSimulateNode {
                         let spawner_base = representative_effect_batch.spawner_base;
 
                         const WORKGROUP_SIZE: u32 = 64;
+                        let spawn_count: u32 =
+                            render_batch.effect_batch_indices.iter().map(|&effect_batch_index| {
+                                match sorted_effect_batches.batches[effect_batch_index.0 as usize].spawn_info {
+                                    BatchSpawnInfo::CpuSpawner { total_spawn_count } => total_spawn_count,
+                                    BatchSpawnInfo::GpuSpawner { .. } => {
+                                        error!("GPU spawner effect shouldn't be batched with a CPU spawner effect!");
+                                        0
+                                    }
+                                }
+                            }).sum();
                         let workgroup_count = spawn_count.div_ceil(WORKGROUP_SIZE);
 
                         trace!(
@@ -7624,11 +7654,13 @@ impl Node for VfxSimulateNode {
 // Returns true if the init dispatch should continue or false if it should abort.
 fn prepare_to_dispatch_init_job(
     effect_batch: &EffectBatch,
+    batch_descriptor_index: u32,
     compute_pass: &mut HanabiComputePass,
     effect_cache: &EffectCache,
     effect_bind_groups: &EffectBindGroups,
     property_bind_groups: &PropertyBindGroups,
     effects_meta: &EffectsMeta,
+    batch_descriptor_size: u32,
 ) -> bool {
     // Do not dispatch any init work if there's nothing to spawn this frame for the
     // batch. Note that this hopefully should have been skipped earlier.
@@ -7683,13 +7715,13 @@ fn prepare_to_dispatch_init_job(
     }
 
     // Compute dynamic offsets
-    let spawner_base = effect_batch.spawner_base;
     let spawner_aligned_size = effects_meta.spawner_buffer.aligned_size();
     debug_assert!(spawner_aligned_size >= GpuSpawnerParams::min_size().get() as usize);
     let property_offset = effect_batch.property_offset;
 
     // Setup init pass
     compute_pass.set_bind_group(1, particle_bind_group, &[]);
+    // TODO: Batch these too!
     let offsets = if let Some(property_offset) = property_offset {
         vec![property_offset]
     } else {
@@ -7702,7 +7734,8 @@ fn prepare_to_dispatch_init_job(
             .unwrap(),
         &offsets[..],
     );
-    let batch_descriptor_offset = 0; // TODO: Actually batch these!
+
+    let batch_descriptor_offset = batch_descriptor_index * batch_descriptor_size;
     compute_pass.set_bind_group(
         3,
         &metadata_bind_group.bind_group,

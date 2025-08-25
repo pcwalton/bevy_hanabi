@@ -69,17 +69,27 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     }
     let indirect_particle_index = thread_index;
 #else
-    // TODO: step through render batch descriptors.
-    let effect_metadata_index = 0;
-    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
-    // Cap to the actual number of spawning requested by CPU (in the case of
-    // spawners) or the number of particles present in the source group (in the
-    // case of cloners).
-    let spawn_count: u32 = u32(spawners[spawner_index].spawn);
-    if (thread_index >= spawn_count) {
+    // Step through render batch descriptors. Cap to the actual amount of
+    // spawning requested by CPU.
+    // TODO: This should be a prefix sum and binary search or something instead
+    // of linear search.
+    var effect_metadata_index = 0u;
+    var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
+    var indirect_particle_index = thread_index;
+    var spawner_index = 0u;
+    while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
+        effect_metadata_index = batch_effect_indices[effect_index_offset];
+        spawner_index = effect_metadata[effect_metadata_index].spawner_index;
+        let this_spawn_count = u32(spawners[spawner_index].spawn);
+        if (indirect_particle_index < this_spawn_count) {
+            break;
+        }
+        indirect_particle_index -= this_spawn_count;
+        effect_index_offset += 1u;
+    }
+    if (effect_index_offset == batch_descriptor.last_batch_effect_index_offset) {
         return;
     }
-    let indirect_particle_index = thread_index;
 #endif
 
     // Cap to max number of dead particles, copied from dead_count at the end of the
