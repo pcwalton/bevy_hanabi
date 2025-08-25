@@ -16,10 +16,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         return;
     }
 
-    let total_alive_count = effect_metadata[thread_index].alive_count;
-
-    // TODO: This is the actual batching code. Uncomment this and delete the above.
-    /*
     if (thread_index >= batch_metadata.total_batch_count) {
         return;
     }
@@ -36,7 +32,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         let batch_effect_index = batch_effect_indices[batch_effect_index_offset];
         total_alive_count += effect_metadata[batch_effect_index].max_update;
     }
-    */
 
     dispatch_indirect_buffer[thread_index].x = (total_alive_count + 63u) >> 6u;
     dispatch_indirect_buffer[thread_index].y = 1;
