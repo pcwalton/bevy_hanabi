@@ -59,6 +59,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // particles to recycle.
     effect_metadata_buffer[em_base + EM_OFFSET_MAX_SPAWN] = dead_count;
 
+    /*
     // Calculate the number of workgroups (thread groups) to dispatch for the update
     // pass, which is the number of alive particles rounded up to 64 (workgroup_size).
     let indirect_dispatch_index = effect_metadata_buffer[em_base + EM_OFFSET_INDIRECT_DISPATCH_INDEX];
@@ -66,6 +67,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     dispatch_indirect_buffer[di_base] = (alive_count + 63u) >> 6u;
     dispatch_indirect_buffer[di_base + 1u] = 1u;
     dispatch_indirect_buffer[di_base + 2u] = 1u;
+    */
 
     // Swap ping/pong buffers. The update pass always writes into ping, and both the update
     // pass and the render pass always read from pong.

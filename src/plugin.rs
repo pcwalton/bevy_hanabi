@@ -33,10 +33,11 @@ use crate::{
         update_mesh_locations, DebugSettings, DispatchIndirectPipeline, DrawEffects,
         EffectAssetEvents, EffectBindGroups, EffectCache, EffectsMeta, EventCache,
         ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuRenderBatchDescriptor,
-        GpuSpawnerParams, InitFillDispatchQueue, ParticlesInitPipeline, ParticlesRenderPipeline,
-        ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache, RenderBatchPipeline,
-        RenderDebugSettings, ShaderCache, SimParams, SortBindGroups, SortedEffectBatches,
-        StorageType as _, UtilsPipeline, VfxSimulateDriverNode, VfxSimulateNode,
+        GpuSpawnerParams, IndirectBatchPipeline, InitFillDispatchQueue, ParticlesInitPipeline,
+        ParticlesRenderPipeline, ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache,
+        RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams, SortBindGroups,
+        SortedEffectBatches, StorageType as _, UtilsPipeline, VfxSimulateDriverNode,
+        VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -425,10 +426,10 @@ impl Plugin for HanabiPlugin {
             .init_resource::<GpuBufferOperations>()
             .init_resource::<DispatchIndirectPipeline>()
             .init_resource::<SpecializedComputePipelines<DispatchIndirectPipeline>>()
+            .init_resource::<IndirectBatchPipeline>()
+            .init_resource::<SpecializedComputePipelines<IndirectBatchPipeline>>()
             .init_resource::<RenderBatchPipeline>()
             .init_resource::<SpecializedComputePipelines<RenderBatchPipeline>>()
-            .init_resource::<ParticlesInitPipeline>()
-            .init_resource::<SpecializedComputePipelines<ParticlesInitPipeline>>()
             .init_resource::<ParticlesInitPipeline>()
             .init_resource::<SpecializedComputePipelines<ParticlesInitPipeline>>()
             .init_resource::<ParticlesUpdatePipeline>()

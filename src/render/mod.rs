@@ -7569,6 +7569,47 @@ impl Node for VfxSimulateNode {
             );
         }
 
+        // Compute indirect batch dispatch pass
+        {
+            let mut compute_pass = self.begin_compute_pass(
+                "hanabi:indirect_batch_dispatch",
+                pipeline_cache,
+                render_context,
+            );
+
+            // Dispatch indirect batch compute job
+            trace!("record commands for indirect batch dispatch pipeline...");
+
+            if compute_pass
+                .set_cached_compute_pipeline(effects_meta.indirect_batch_pipeline_id)
+                .is_err()
+            {
+                // FIXME - Bevy doesn't allow returning custom errors here...
+                return Ok(());
+            }
+
+            const WORKGROUP_SIZE: u32 = 64;
+            let total_effect_count = effects_meta.spawner_buffer.len() as u32;
+            let workgroup_count = total_effect_count.div_ceil(WORKGROUP_SIZE);
+
+            // Setup vfx_indirect_batch pass
+            compute_pass.set_bind_group(
+                0,
+                effects_meta
+                    .indirect_batch_bind_group
+                    .as_ref()
+                    .expect("Indirect batch bind group should be ready"),
+                &[],
+            );
+
+            compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+            trace!(
+                "indirect batch dispatch compute dispatched: total_effect_count={} workgroup_count={}",
+                total_effect_count,
+                workgroup_count
+            );
+        }
+
         // Compute update pass
         {
             let Some(indirect_buffer) = effects_meta.update_dispatch_indirect_buffer.buffer()
