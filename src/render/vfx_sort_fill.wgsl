@@ -29,6 +29,7 @@ struct EffectSortMetadataAtomic {
 @group(0) @binding(1) var<storage, read> particle_buffer : RawParticleBuffer;
 @group(0) @binding(2) var<storage, read> indirect_index_buffer : array<u32>;
 // Technically read-only, but the type contains atomic<> fields and wasm is strict about it
+// TODO: Should be an array and not use a dynamic offset.
 @group(0) @binding(3) var<storage, read_write> effect_metadata : EffectMetadata;
 @group(0) @binding(4) var<storage, read_write> effect_sort_metadata : EffectSortMetadataAtomic;
 

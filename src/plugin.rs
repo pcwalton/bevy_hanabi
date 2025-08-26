@@ -32,12 +32,12 @@ use crate::{
         prepare_property_buffers, queue_effects, queue_init_fill_dispatch_ops, resolve_parents,
         update_mesh_locations, DebugSettings, DispatchIndirectPipeline, DrawEffects,
         EffectAssetEvents, EffectBindGroups, EffectCache, EffectsMeta, EventCache,
-        ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuRenderBatchDescriptor,
-        GpuSpawnerParams, IndirectBatchPipeline, InitFillDispatchQueue, ParticlesInitPipeline,
-        ParticlesRenderPipeline, ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache,
-        RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams, SortBindGroups,
-        SortedEffectBatches, StorageType as _, UtilsPipeline, VfxSimulateDriverNode,
-        VfxSimulateNode,
+        ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuEffectSortMetadata,
+        GpuRenderBatchDescriptor, GpuSpawnerParams, IndirectBatchPipeline, InitFillDispatchQueue,
+        ParticlesInitPipeline, ParticlesRenderPipeline, ParticlesUpdatePipeline,
+        PropertyBindGroups, PropertyCache, RenderBatchPipeline, RenderDebugSettings, ShaderCache,
+        SimParams, SortBindGroups, SortedEffectBatches, StorageType as _, UtilsPipeline,
+        VfxSimulateDriverNode, VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -149,6 +149,8 @@ impl HanabiPlugin {
             (render_effect_indirect_size.get() as u32).to_wgsl_string();
         let batch_descriptor_padding_code =
             GpuRenderBatchDescriptor::padding_code(min_storage_buffer_offset_alignment);
+        let effect_sort_metadata_padding_code =
+            GpuEffectSortMetadata::padding_code(min_storage_buffer_offset_alignment);
         let common_code = include_str!("render/vfx_common.wgsl")
             .replace("{{SPAWNER_PADDING}}", &spawner_padding_code)
             .replace("{{EFFECT_METADATA_PADDING}}", &effect_metadata_padding_code)
@@ -156,6 +158,10 @@ impl HanabiPlugin {
             .replace(
                 "{{BATCH_DESCRIPTOR_PADDING}}",
                 &batch_descriptor_padding_code,
+            )
+            .replace(
+                "{{EFFECT_SORT_METADATA_PADDING}}",
+                &effect_sort_metadata_padding_code,
             );
         Shader::from_wgsl(
             common_code,

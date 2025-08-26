@@ -492,6 +492,13 @@ struct GpuNonIndexedIndirectDrawCommand {
     base_instance: u32,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
+pub struct GpuEffectSortMetadata {
+    first_sort_buffer_index: u32,
+    last_sort_buffer_index: u32,
+}
+
 /// Single init fill dispatch item in an [`InitFillDispatchQueue`].
 #[derive(Debug)]
 pub(super) struct InitFillDispatchItem {
