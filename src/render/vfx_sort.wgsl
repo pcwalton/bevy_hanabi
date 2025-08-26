@@ -1,3 +1,5 @@
+#import bevy_hanabi::vfx_common::EffectSortMetadata;
+
 struct KeyValuePair {
     /// Sorting key.
     key: u32,
@@ -8,11 +10,6 @@ struct KeyValuePair {
     /// Value associated with the sort key(s), generally an index to some other data.
     /// Copied as is and otherwise ignored by the sorting algorithm.
     value: u32,
-}
-
-struct SortBuffer {
-    count: i32,
-    pairs: array<KeyValuePair>,
 }
 
 /// Check whether kv1 > kv2, comparing the key(s) of each pair.
@@ -28,7 +25,8 @@ fn compare_greater(kv1: KeyValuePair, kv2: KeyValuePair) -> bool {
     return false;
 }
 
-@group(0) @binding(0) var<storage, read_write> sort_buffer : SortBuffer;
+@group(0) @binding(0) var<storage, read_write> sort_buffer : array<KeyValuePair>;
+@group(0) @binding(1) var<storage, read> effect_sort_metadata : EffectSortMetadata;
 
 /// Naive insertion sort. TODO: replace with something faster.
 @compute @workgroup_size(64)

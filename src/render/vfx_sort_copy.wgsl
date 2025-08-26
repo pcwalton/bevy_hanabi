@@ -11,19 +11,15 @@ struct KeyValuePair {
     value: u32,
 }
 
-struct SortBuffer {
-    count: i32,
-    pairs: array<KeyValuePair>,
-}
-
 struct IndirectIndexBuffer {
     data: array<u32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> indirect_index_buffer : IndirectIndexBuffer;
-@group(0) @binding(1) var<storage, read> sort_buffer : SortBuffer;
+@group(0) @binding(1) var<storage, read> sort_buffer : array<KeyValuePair>;
 // Technically read-only, but the type contains atomic<> fields and wasm is strict about it
 @group(0) @binding(2) var<storage, read_write> effect_metadata : EffectMetadata;
+@group(0) @binding(3) var<storage, read> effect_sort_metadata : EffectSortMetadata;
 
 /// Copy the sorted particle indices back into the effect index buffer.
 @compute @workgroup_size(64)
@@ -37,7 +33,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // Always write into ping, read from pong
     let write_index = effect_metadata.ping;
 
-    let particle_index = sort_buffer.pairs[row_index].value;
+    let particle_index = sort_buffer[row_index].value;
     indirect_index_buffer.data[
         (row_index + effect_metadata.base_instance) * 3u + write_index
     ] = particle_index;

@@ -11,22 +11,26 @@ struct KeyValuePair {
     value: u32,
 }
 
-struct SortBuffer {
-    count: atomic<i32>,
-    pairs: array<KeyValuePair>,
-}
-
 /// Particle buffer as an array of u32. This prevents having to specialize this shader
 /// for every single particle layout.
 struct RawParticleBuffer {
     data: array<u32>,
 }
 
-@group(0) @binding(0) var<storage, read_write> sort_buffer : SortBuffer;
+// NB: Keep in sync with `EffectSortMetadata` in `vfx_common`.
+struct EffectSortMetadataAtomic {
+    first_sort_buffer_index: u32,
+    last_sort_buffer_index: atomic<u32>,
+
+    {{EFFECT_SORT_METADATA_PADDING}}
+}
+
+@group(0) @binding(0) var<storage, read_write> sort_buffer : array<KeyValuePair>;
 @group(0) @binding(1) var<storage, read> particle_buffer : RawParticleBuffer;
 @group(0) @binding(2) var<storage, read> indirect_index_buffer : array<u32>;
 // Technically read-only, but the type contains atomic<> fields and wasm is strict about it
 @group(0) @binding(3) var<storage, read_write> effect_metadata : EffectMetadata;
+@group(0) @binding(4) var<storage, read_write> effect_sort_metadata : EffectSortMetadataAtomic;
 
 /// Fill the sorting key-value pair buffer with data to prepare for actual sorting.
 @compute @workgroup_size(64)

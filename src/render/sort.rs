@@ -19,7 +19,7 @@ use wgpu::{
 };
 
 use super::{gpu_buffer::GpuBuffer, GpuDispatchIndirect, GpuEffectMetadata, StorageType};
-use crate::{Attribute, ParticleLayout};
+use crate::{render::aligned_buffer_vec::AlignedBufferVec, Attribute, ParticleLayout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct SortFillBindGroupLayoutKey {
@@ -66,6 +66,8 @@ pub struct SortBindGroups {
     /// GPU buffer containing the [`GpuDispatchIndirect`] structs for the
     /// sort-fill and sort passes.
     indirect_buffer: GpuBuffer<GpuDispatchIndirect>,
+    /// GPU buffer of sort metadata.
+    sort_metadata_buffer: AlignedBufferVec<GpuSortMetadata>,
     /// Bind group layouts for group #0 of the sort-fill compute pass.
     sort_fill_bind_group_layouts:
         HashMap<SortFillBindGroupLayoutKey, (BindGroupLayout, CachedComputePipelineId)>,

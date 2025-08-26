@@ -216,6 +216,14 @@ struct NonIndexedIndirectDrawCommand {
     base_instance: u32,
 }
 
+// NB: Keep in sync with `EffectSortMetadataAtomic` in `vfx_sort_fill`.
+struct EffectSortMetadata {
+    first_sort_buffer_index: u32,
+    last_sort_buffer_index: u32,
+
+    {{EFFECT_SORT_METADATA_PADDING}}
+}
+
 /// Stride, in u32 count, between elements of an array<EffectMetadata>.
 const EFFECT_METADATA_STRIDE: u32 = {{EFFECT_METADATA_STRIDE}} / 4u;
 
