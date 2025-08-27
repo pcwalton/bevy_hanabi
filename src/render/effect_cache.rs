@@ -19,8 +19,7 @@ use crate::{
     asset::EffectAsset,
     render::{
         calc_hash, event::GpuChildInfo, GpuEffectMetadata, GpuRenderBatchDescriptor,
-        GpuRenderBatchMetadata, GpuSpawnerParams, LayoutFlags, StorageType as _,
-        INDIRECT_INDEX_SIZE,
+        GpuSpawnerParams, LayoutFlags, StorageType as _, INDIRECT_INDEX_SIZE,
     },
     ParticleLayout,
 };

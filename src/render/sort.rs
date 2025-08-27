@@ -60,6 +60,11 @@ struct SortCopyBindGroupKey {
     effect_sort_metadata: BufferId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SortBindGroupKey {
+    effect_sort_metadata: BufferId,
+}
+
 #[derive(Resource)]
 pub struct SortBindGroups {
     /// Render device.
@@ -82,6 +87,7 @@ pub struct SortBindGroups {
     /// TODO: Fill this in.
     sort_bind_groups: HashMap<SortBindGroupKey, BindGroup>,
     sort_copy_bind_group_layout: BindGroupLayout,
+    sort_bind_group_layout: BindGroupLayout,
     /// Pipeline for sort pass.
     sort_pipeline_id: CachedComputePipelineId,
     /// Pipeline for sort-copy pass.
@@ -167,7 +173,7 @@ impl SortBindGroups {
 
         let sort_pipeline_id = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             label: Some("hanabi:pipeline:sort".into()),
-            layout: vec![sort_bind_group_layout],
+            layout: vec![sort_bind_group_layout.clone()],
             shader: sort_shader,
             // TODO: Do we need to put some common shader defs in here?
             shader_defs: vec!["HAS_DUAL_KEY".into()],
@@ -256,6 +262,7 @@ impl SortBindGroups {
             sort_fill_bind_groups: default(),
             sort_bind_groups: default(),
             sort_copy_bind_group_layout,
+            sort_bind_group_layout,
             sort_pipeline_id,
             sort_copy_pipeline_id,
             sort_copy_bind_groups: default(),
@@ -289,8 +296,11 @@ impl SortBindGroups {
     }
 
     #[inline]
-    pub fn sort_bind_group(&self) -> &BindGroup {
-        &self.sort_bind_group
+    pub fn sort_bind_group(&self, effect_sort_metadata: BufferId) -> Option<&BindGroup> {
+        let key = SortBindGroupKey {
+            effect_sort_metadata,
+        };
+        self.sort_bind_groups.get(&key)
     }
 
     #[inline]
@@ -630,23 +640,42 @@ impl SortBindGroups {
         self.sort_copy_bind_groups.get(&key)
     }
 
-    fn ensure_sort_bind_group() {
-        let sort_bind_group = render_device.create_bind_group(
-            "hanabi:bind_group:sort",
-            &sort_bind_group_layout,
-            &[
-                // @group(0) @binding(0) var<storage, read_write> pairs : array<KeyValuePair>;
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &sort_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                // @group(0) @
-            ],
-        );
-
+    pub(crate) fn ensure_sort_bind_group(
+        &mut self,
+        effect_sort_metadata: &Buffer,
+    ) -> Result<&BindGroup, ()> {
+        Ok(self
+            .sort_bind_groups
+            .entry(SortBindGroupKey {
+                effect_sort_metadata: effect_sort_metadata.id(),
+            })
+            .or_insert_with(|| {
+                let sort_bind_group = self.render_device.create_bind_group(
+                    "hanabi:bind_group:sort",
+                    &self.sort_bind_group_layout,
+                    &[
+                        // @group(0) @binding(0) var<storage, read_write> pairs : array<KeyValuePair>;
+                        BindGroupEntry {
+                            binding: 0,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: &self.sort_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(1) var<storage, read> effect_sort_metadata
+                        // : EffectSortMetadata;
+                        BindGroupEntry {
+                            binding: 1,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: &effect_sort_metadata,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                    ],
+                );
+                sort_bind_group
+            }))
     }
 }

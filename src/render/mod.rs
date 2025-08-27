@@ -475,6 +475,13 @@ pub(crate) struct GpuRenderBatchDescriptor {
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
+pub(crate) struct GpuEffectSortMetadata {
+    first_sort_buffer_index: u32,
+    last_sort_buffer_index: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
 struct GpuIndexedIndirectDrawCommand {
     index_count: u32,
     instance_count: u32,
@@ -490,13 +497,6 @@ struct GpuNonIndexedIndirectDrawCommand {
     instance_count: u32,
     vertex_offset: u32,
     base_instance: u32,
-}
-
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
-pub struct GpuEffectSortMetadata {
-    first_sort_buffer_index: u32,
-    last_sort_buffer_index: u32,
 }
 
 /// Single init fill dispatch item in an [`InitFillDispatchQueue`].
@@ -2987,6 +2987,7 @@ pub struct EffectsMeta {
     /// Global shared GPU buffer storing the various `EffectMetadata`
     /// structs for the active effect instances.
     effect_metadata_buffer: BufferTable<GpuEffectMetadata>,
+    effect_sort_metadata_buffer: AlignedBufferVec<GpuEffectSortMetadata>,
     total_render_batch_count: u32,
     render_batch_metadata_buffer: UniformBuffer<GpuRenderBatchMetadata>,
     render_batch_effect_index_buffer: RawBufferVec<u32>,
@@ -3050,6 +3051,11 @@ impl EffectsMeta {
                 BufferUsages::STORAGE | BufferUsages::INDIRECT,
                 NonZeroU64::new(item_align),
                 Some("hanabi:buffer:effect_metadata".to_string()),
+            ),
+            effect_sort_metadata_buffer: AlignedBufferVec::new(
+                BufferUsages::STORAGE,
+                NonZeroU64::new(item_align),
+                Some("hanabi:buffer:sort_metadata".to_string()),
             ),
             total_render_batch_count: 0,
             render_batch_metadata_buffer: UniformBuffer::default(),
@@ -6811,11 +6817,14 @@ pub(crate) fn prepare_bind_groups(
             let particle_buffer = effect_buffer.particle_buffer();
             let indirect_index_buffer = effect_buffer.indirect_index_buffer();
             let effect_metadata_buffer = effects_meta.effect_metadata_buffer.buffer().unwrap();
+            let effect_sort_metadata_buffer =
+                effects_meta.effect_sort_metadata_buffer.buffer().unwrap();
             if let Err(err) = sort_bind_groups.ensure_sort_fill_bind_group(
                 &effect_batch.particle_layout,
                 particle_buffer,
                 indirect_index_buffer,
                 effect_metadata_buffer,
+                effect_sort_metadata_buffer,
             ) {
                 error!(
                     "Failed to create sort-fill bind group @0 for ribbon effect: {:?}",
@@ -6826,11 +6835,21 @@ pub(crate) fn prepare_bind_groups(
 
             // Bind group @0 of sort-copy pass
             let indirect_index_buffer = effect_buffer.indirect_index_buffer();
-            if let Err(err) = sort_bind_groups
-                .ensure_sort_copy_bind_group(indirect_index_buffer, effect_metadata_buffer)
-            {
+            if let Err(err) = sort_bind_groups.ensure_sort_copy_bind_group(
+                indirect_index_buffer,
+                effect_metadata_buffer,
+                effect_sort_metadata_buffer,
+            ) {
                 error!(
                     "Failed to create sort-copy bind group @0 for ribbon effect: {:?}",
+                    err
+                );
+                continue;
+            }
+
+            if let Err(err) = sort_bind_groups.ensure_sort_bind_group(effect_sort_metadata_buffer) {
+                error!(
+                    "Failed to create sort bind group @0 for ribbon effect: {:?}",
                     err
                 );
                 continue;
@@ -7791,6 +7810,8 @@ impl Node for VfxSimulateNode {
                 self.begin_compute_pass("hanabi:sort", pipeline_cache, render_context);
 
             let effect_metadata_buffer = effects_meta.effect_metadata_buffer.buffer().unwrap();
+            let effect_sort_metadata_buffer =
+                effects_meta.effect_sort_metadata_buffer.buffer().unwrap();
             let indirect_buffer = sort_bind_groups.indirect_buffer().unwrap();
 
             // Loop on batches and find those which need sorting
@@ -7841,6 +7862,7 @@ impl Node for VfxSimulateNode {
                         particle_buffer.id(),
                         indirect_index_buffer.id(),
                         effect_metadata_buffer.id(),
+                        effect_sort_metadata_buffer.id(),
                     ) else {
                         warn!("Missing sort-fill bind group.");
                         continue;
@@ -7873,10 +7895,14 @@ impl Node for VfxSimulateNode {
                         return Ok(());
                     }
 
-                    compute_pass.set_bind_group(0, sort_bind_groups.sort_bind_group(), &[]);
-                    compute_pass
-                        .dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
-                    trace!("Dispatched sort with indirect offset +{indirect_offset}");
+                    if let Some(sort_bind_group) =
+                        sort_bind_groups.sort_bind_group(effect_sort_metadata_buffer.id())
+                    {
+                        compute_pass.set_bind_group(0, sort_bind_group, &[]);
+                        compute_pass
+                            .dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
+                        trace!("Dispatched sort with indirect offset +{indirect_offset}");
+                    }
 
                     compute_pass.pop_debug_group();
                 }
@@ -7902,6 +7928,7 @@ impl Node for VfxSimulateNode {
                     let Some(bind_group) = sort_bind_groups.sort_copy_bind_group(
                         indirect_index_buffer.id(),
                         effect_metadata_buffer.id(),
+                        effect_sort_metadata_buffer.id(),
                     ) else {
                         warn!("Missing sort-copy bind group.");
                         continue;
