@@ -44,7 +44,7 @@ struct ParentParticleBuffer {
 // "metadata" group @3
 @group(3) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 @group(3) @binding(1) var<storage, read> batch_descriptor : BatchDescriptor;
-@group(3) @binding(2) var<storage, read> batch_effect_indices: array<u32>;
+@group(3) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
 #ifdef CONSUME_GPU_SPAWN_EVENTS
 @group(3) @binding(3) var<storage, read> child_info_buffer : ChildInfoBuffer;
 @group(3) @binding(4) var<storage, read> event_buffer : EventBuffer;

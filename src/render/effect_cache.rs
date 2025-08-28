@@ -603,6 +603,7 @@ pub(crate) struct DispatchBufferIndices {
     ///
     /// [`EffectsMeta::effect_metadata_buffer`]: super::EffectsMeta::effect_metadata_buffer
     pub(crate) effect_metadata_buffer_table_id: BufferTableId,
+    pub(crate) effect_sort_metadata_index: Option<BufferTableId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
