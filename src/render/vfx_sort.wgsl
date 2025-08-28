@@ -15,29 +15,26 @@ fn compare_greater(kv1: KeyValuePair, kv2: KeyValuePair) -> bool {
     if (kv1.key > kv2.key) {
         return true;
     }
-#ifdef HAS_DUAL_KEY
     if (kv1.key == kv2.key) {
         return kv1.key2 > kv2.key2;
     }
-#endif
     return false;
 }
 
 @group(0) @binding(0) var<storage, read_write> sort_buffer : array<KeyValuePair>;
-@group(0) @binding(1) var<storage, read> effect_sort_metadata : EffectSortMetadata;
+@group(0) @binding(1) var<storage, read> effect_sort_metadata : array<EffectSortMetadata>;
 
 /// Naive insertion sort. TODO: replace with something faster.
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // Naive single-threaded sort
-    if (global_invocation_id.x != 0) {
+    let metadata_index = u32(global_invocation_id.x);
+    if (metadata_index >= arrayLength(&effect_sort_metadata)) {
         return;
     }
 
-    // TODO: Don't use a dynamic offset here; instead, index an effect sort
-    // metadata array.
-    let first_sort_buffer_index = i32(effect_sort_metadata.first_sort_buffer_index);
-    let last_sort_buffer_index = i32(effect_sort_metadata.last_sort_buffer_index);
+    let first_sort_buffer_index = i32(effect_sort_metadata[metadata_index].first_sort_buffer_index);
+    let last_sort_buffer_index = i32(effect_sort_metadata[metadata_index].last_sort_buffer_index);
 
     // Insertion sort
     let num_items = last_sort_buffer_index - first_sort_buffer_index;

@@ -3,7 +3,10 @@ use std::{fmt::Debug, num::NonZeroU32, ops::Range};
 use bevy::{
     ecs::entity::EntityHashMap,
     prelude::*,
-    render::{render_resource::CachedComputePipelineId, sync_world::MainEntity},
+    render::{
+        render_resource::{BufferId, CachedComputePipelineId},
+        sync_world::MainEntity,
+    },
 };
 use fixedbitset::FixedBitSet;
 use indexmap::IndexMap;
@@ -138,7 +141,6 @@ pub(crate) struct RenderBatch {
     ///
     /// [`EffectsMeta::update_dispatch_indirect_buffer`]: super::EffectsMeta::update_dispatch_indirect_buffer
     pub(crate) update_dispatch_indirect_buffer_row_index: u32,
-
 }
 
 impl SortedEffectBatches {
@@ -386,7 +388,7 @@ impl EffectBatch {
             cached_effect_events: cached_effect_events.cloned(),
             cached_mesh_location: cached_mesh_location.cloned(),
             sort_fill_indirect_dispatch_index: None, // set later as needed
-            sort_metadata_index: None, // set later as needed
+            sort_metadata_index: None,               // set later as needed
             position: input.position,
             main_entity,
         }

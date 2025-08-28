@@ -4011,6 +4011,8 @@ pub(crate) fn prepare_effects(
     // Clear per-instance buffers, which are filled below and re-uploaded each frame
     effects_meta.spawner_buffer.clear();
 
+    effects_meta.effect_sort_metadata_buffer.clear();
+
     // Build batcher inputs from extracted effects, updating all cached components
     // for each effect on the fly.
     let effects = std::mem::take(&mut extracted_effects.effects);
@@ -7833,6 +7835,8 @@ impl Node for VfxSimulateNode {
                 effects_meta.effect_sort_metadata_buffer.buffer().unwrap();
             let indirect_buffer = sort_bind_groups.indirect_buffer().unwrap();
 
+            let effect_sort_metadata_count = effects_meta.effect_sort_metadata_buffer.len() as u32;
+
             // Loop on batches and find those which need sorting
             for effect_batch in sorted_effect_batches.iter() {
                 trace!("Processing effect batch for sorting...");
@@ -7912,80 +7916,94 @@ impl Node for VfxSimulateNode {
 
                     compute_pass.pop_debug_group();
                 }
+            }
 
-                // Do the actual sort
+            // Do the actual sort
+            {
+                compute_pass.push_debug_group("hanabi:sort");
+
+                if compute_pass
+                    .set_cached_compute_pipeline(sort_bind_groups.sort_pipeline_id())
+                    .is_err()
                 {
-                    compute_pass.push_debug_group("hanabi:sort");
-
-                    if compute_pass
-                        .set_cached_compute_pipeline(sort_bind_groups.sort_pipeline_id())
-                        .is_err()
-                    {
-                        compute_pass.pop_debug_group();
-                        // FIXME - Bevy doesn't allow returning custom errors here...
-                        return Ok(());
-                    }
-
-                    if let Some(sort_bind_group) =
-                        sort_bind_groups.sort_bind_group(effect_sort_metadata_buffer.id())
-                    {
-                        compute_pass.set_bind_group(
-                            0,
-                            sort_bind_group,
-                            &[effect_sort_metadata_offset],
-                        );
-                        compute_pass
-                            .dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
-                        trace!("Dispatched sort with indirect offset +{indirect_offset}");
-                    }
-
                     compute_pass.pop_debug_group();
+                    // FIXME - Bevy doesn't allow returning custom errors here...
+                    return Ok(());
                 }
+
+                if let Some(sort_bind_group) = sort_bind_groups.sort_bind_group() {
+                    compute_pass.set_bind_group(0, sort_bind_group, &[]);
+
+                    const WORKGROUP_SIZE: u32 = 64;
+                    let spawn_count = effect_sort_metadata_count.div_ceil(WORKGROUP_SIZE);
+                    compute_pass.dispatch_workgroups(spawn_count, 1, 1);
+                    trace!("Dispatched sort");
+                }
+
+                compute_pass.pop_debug_group();
+            }
+
+            for effect_batch in sorted_effect_batches.iter() {
+                let Some(effect_buffer) = effect_cache.get_buffer(effect_batch.buffer_index) else {
+                    warn!("Missing sort-fill effect buffer.");
+                    continue;
+                };
+
+                let indirect_dispatch_index = *effect_batch
+                    .sort_fill_indirect_dispatch_index
+                    .as_ref()
+                    .unwrap();
+                let indirect_offset =
+                    sort_bind_groups.get_indirect_dispatch_byte_offset(indirect_dispatch_index);
+
+                let effect_sort_metadata_offset =
+                    effects_meta.effect_sort_metadata_buffer.dynamic_offset(
+                        effect_batch
+                            .sort_metadata_index
+                            .expect("Sort metadata index should have been set at this point")
+                            as usize,
+                    );
 
                 // Copy the sorted particle indices back into the indirect index buffer, where
                 // the render pass will read them.
+                compute_pass.push_debug_group("hanabi:copy_sorted_indices");
+
+                // Fetch compute pipeline
+                let pipeline_id = sort_bind_groups.get_sort_copy_pipeline_id();
+                if compute_pass
+                    .set_cached_compute_pipeline(pipeline_id)
+                    .is_err()
                 {
-                    compute_pass.push_debug_group("hanabi:copy_sorted_indices");
-
-                    // Fetch compute pipeline
-                    let pipeline_id = sort_bind_groups.get_sort_copy_pipeline_id();
-                    if compute_pass
-                        .set_cached_compute_pipeline(pipeline_id)
-                        .is_err()
-                    {
-                        compute_pass.pop_debug_group();
-                        // FIXME - Bevy doesn't allow returning custom errors here...
-                        return Ok(());
-                    }
-
-                    // Bind group sort_copy@0
-                    let indirect_index_buffer = effect_buffer.indirect_index_buffer();
-                    let Some(bind_group) = sort_bind_groups.sort_copy_bind_group(
-                        indirect_index_buffer.id(),
-                        effect_metadata_buffer.id(),
-                        effect_sort_metadata_buffer.id(),
-                    ) else {
-                        warn!("Missing sort-copy bind group.");
-                        continue;
-                    };
-                    let effect_metadata_offset =
-                        effects_meta.effect_metadata_buffer.dynamic_offset(
-                            effect_batch
-                                .dispatch_buffer_indices
-                                .effect_metadata_buffer_table_id,
-                        );
-                    compute_pass.set_bind_group(
-                        0,
-                        bind_group,
-                        &[effect_metadata_offset, effect_sort_metadata_offset],
-                    );
-
-                    compute_pass
-                        .dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
-                    trace!("Dispatched sort-copy with indirect offset +{indirect_offset}");
-
                     compute_pass.pop_debug_group();
+                    // FIXME - Bevy doesn't allow returning custom errors here...
+                    return Ok(());
                 }
+
+                // Bind group sort_copy@0
+                let indirect_index_buffer = effect_buffer.indirect_index_buffer();
+                let Some(bind_group) = sort_bind_groups.sort_copy_bind_group(
+                    indirect_index_buffer.id(),
+                    effect_metadata_buffer.id(),
+                    effect_sort_metadata_buffer.id(),
+                ) else {
+                    warn!("Missing sort-copy bind group.");
+                    continue;
+                };
+                let effect_metadata_offset = effects_meta.effect_metadata_buffer.dynamic_offset(
+                    effect_batch
+                        .dispatch_buffer_indices
+                        .effect_metadata_buffer_table_id,
+                );
+                compute_pass.set_bind_group(
+                    0,
+                    bind_group,
+                    &[effect_metadata_offset, effect_sort_metadata_offset],
+                );
+
+                compute_pass.dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
+                trace!("Dispatched sort-copy with indirect offset +{indirect_offset}");
+
+                compute_pass.pop_debug_group();
             }
         }
 

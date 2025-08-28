@@ -95,8 +95,7 @@ pub struct SortBindGroups {
     /// Bind groups for group #0 of the sort-fill compute pass.
     sort_fill_bind_groups: HashMap<SortFillBindGroupKey, BindGroup>,
     /// Bind groups for group #0 of the sort compute pass.
-    /// TODO: Fill this in.
-    sort_bind_groups: HashMap<SortBindGroupKey, BindGroup>,
+    sort_bind_group: Option<CachedSortBindGroup>,
     sort_copy_bind_group_layout: BindGroupLayout,
     sort_bind_group_layout: BindGroupLayout,
     /// Pipeline for sort pass.
@@ -105,6 +104,12 @@ pub struct SortBindGroups {
     sort_copy_pipeline_id: CachedComputePipelineId,
     /// Bind groups for group #0 of the sort-copy compute pass.
     sort_copy_bind_groups: HashMap<SortCopyBindGroupKey, BindGroup>,
+}
+
+struct CachedSortBindGroup {
+    sort_buffer_id: BufferId,
+    sort_metadata_buffer_id: BufferId,
+    bind_group: BindGroup,
 }
 
 impl SortBindGroups {
@@ -154,13 +159,13 @@ impl SortBindGroups {
                     count: None,
                 },
                 // @group(0) @binding(1) var<storage, read> effect_sort_metadata
-                // : EffectSortMetadata;
+                // : array<EffectSortMetadata>;
                 BindGroupLayoutEntry {
                     binding: 1,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: true,
+                        has_dynamic_offset: false,
                         min_binding_size: Some(sort_metadata_size),
                     },
                     count: None,
@@ -173,7 +178,7 @@ impl SortBindGroups {
             layout: vec![sort_bind_group_layout.clone()],
             shader: sort_shader,
             // TODO: Do we need to put some common shader defs in here?
-            shader_defs: vec!["HAS_DUAL_KEY".into()],
+            shader_defs: vec![],
             entry_point: "main".into(),
             push_constant_ranges: vec![],
             zero_initialize_workgroup_memory: false,
@@ -256,7 +261,7 @@ impl SortBindGroups {
             indirect_buffer,
             sort_fill_bind_group_layouts: default(),
             sort_fill_bind_groups: default(),
-            sort_bind_groups: default(),
+            sort_bind_group: default(),
             sort_copy_bind_group_layout,
             sort_bind_group_layout,
             sort_pipeline_id,
@@ -292,11 +297,10 @@ impl SortBindGroups {
     }
 
     #[inline]
-    pub fn sort_bind_group(&self, effect_sort_metadata: BufferId) -> Option<&BindGroup> {
-        let key = SortBindGroupKey {
-            effect_sort_metadata,
-        };
-        self.sort_bind_groups.get(&key)
+    pub fn sort_bind_group(&self) -> Option<&BindGroup> {
+        self.sort_bind_group
+            .as_ref()
+            .map(|sort_bind_group| &sort_bind_group.bind_group)
     }
 
     #[inline]
@@ -411,7 +415,7 @@ impl SortBindGroups {
                         label: Some("hanabi:pipeline:sort_fill".into()),
                         layout: vec![bind_group_layout.clone()],
                         shader: self.sort_fill_shader.clone(),
-                        shader_defs: vec!["HAS_DUAL_KEY".into()],
+                        shader_defs: vec![],
                         entry_point: "main".into(),
                         push_constant_ranges: vec![],
                         zero_initialize_workgroup_memory: false,
@@ -666,48 +670,52 @@ impl SortBindGroups {
         &mut self,
         effect_sort_metadata: &Buffer,
     ) -> Result<&BindGroup, ()> {
-        let storage_alignment = self
-            .render_device
-            .limits()
-            .min_storage_buffer_offset_alignment;
-        let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
+        let sort_buffer = self
+            .sort_buffer
+            .buffer()
+            .expect("Sort buffer must be present");
 
-        Ok(self
-            .sort_bind_groups
-            .entry(SortBindGroupKey {
-                effect_sort_metadata: effect_sort_metadata.id(),
-            })
-            .or_insert_with(|| {
-                let sort_bind_group = self.render_device.create_bind_group(
-                    "hanabi:bind_group:sort",
-                    &self.sort_bind_group_layout,
-                    &[
-                        // @group(0) @binding(0) var<storage, read_write> pairs : array<KeyValuePair>;
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: self
-                                    .sort_buffer
-                                    .buffer()
-                                    .expect("Sort buffer must be present"),
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(1) var<storage, read> effect_sort_metadata
-                        // : EffectSortMetadata;
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: effect_sort_metadata,
-                                offset: 0,
-                                size: Some(sort_metadata_size),
-                            }),
-                        },
-                    ],
-                );
-                sort_bind_group
-            }))
+        if self.sort_bind_group.as_ref().is_none_or(|sort_bind_group| {
+            sort_bind_group.sort_metadata_buffer_id != effect_sort_metadata.id()
+                || sort_bind_group.sort_buffer_id != sort_buffer.id()
+        }) {
+            let sort_bind_group = self.render_device.create_bind_group(
+                "hanabi:bind_group:sort",
+                &self.sort_bind_group_layout,
+                &[
+                    // @group(0) @binding(0) var<storage, read_write> pairs : array<KeyValuePair>;
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: sort_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    // @group(0) @binding(1) var<storage, read> effect_sort_metadata
+                    // : array<EffectSortMetadata>;
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: effect_sort_metadata,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                ],
+            );
+
+            self.sort_bind_group = Some(CachedSortBindGroup {
+                sort_buffer_id: sort_buffer.id(),
+                sort_metadata_buffer_id: effect_sort_metadata.id(),
+                bind_group: sort_bind_group,
+            });
+        }
+
+        self.sort_bind_group
+            .as_ref()
+            .map(|cached_sort_bind_group| &cached_sort_bind_group.bind_group)
+            .ok_or(())
     }
 
     pub(crate) fn clear_sort_buffer(&mut self) {
