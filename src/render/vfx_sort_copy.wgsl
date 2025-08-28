@@ -1,4 +1,4 @@
-#import bevy_hanabi::vfx_common::EffectMetadata
+#import bevy_hanabi::vfx_common::{EffectMetadata, EffectSortMetadata}
 
 /// Key-value pair for sorting, with optional second sort key.
 struct KeyValuePair {
@@ -29,11 +29,13 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     if (row_index >= count) {
         return;
     }
+
+    let first_sort_buffer_index = effect_sort_metadata.first_sort_buffer_index;
     
     // Always write into ping, read from pong
     let write_index = effect_metadata.ping;
 
-    let particle_index = sort_buffer[row_index].value;
+    let particle_index = sort_buffer[first_sort_buffer_index + row_index].value;
     indirect_index_buffer.data[
         (row_index + effect_metadata.base_instance) * 3u + write_index
     ] = particle_index;

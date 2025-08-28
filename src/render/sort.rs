@@ -666,6 +666,12 @@ impl SortBindGroups {
         &mut self,
         effect_sort_metadata: &Buffer,
     ) -> Result<&BindGroup, ()> {
+        let storage_alignment = self
+            .render_device
+            .limits()
+            .min_storage_buffer_offset_alignment;
+        let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
+
         Ok(self
             .sort_bind_groups
             .entry(SortBindGroupKey {
@@ -693,9 +699,9 @@ impl SortBindGroups {
                         BindGroupEntry {
                             binding: 1,
                             resource: BindingResource::Buffer(BufferBinding {
-                                buffer: &effect_sort_metadata,
+                                buffer: effect_sort_metadata,
                                 offset: 0,
-                                size: None,
+                                size: Some(sort_metadata_size),
                             }),
                         },
                     ],
