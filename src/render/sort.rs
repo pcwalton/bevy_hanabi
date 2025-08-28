@@ -1,4 +1,7 @@
-use std::num::{NonZeroU32, NonZeroU64};
+use std::{
+    num::{NonZeroU32, NonZeroU64},
+    ops::Range,
+};
 
 use bevy::{
     asset::Handle,
@@ -7,12 +10,14 @@ use bevy::{
     render::{
         render_resource::{
             BindGroup, BindGroupLayout, Buffer, BufferId, CachedComputePipelineId,
-            ComputePipelineDescriptor, PipelineCache, Shader,
+            ComputePipelineDescriptor, GpuArrayBuffer, PipelineCache, RawBufferVec, Shader,
+            ShaderType,
         },
-        renderer::RenderDevice,
+        renderer::{RenderDevice, RenderQueue},
     },
     utils::default,
 };
+use bytemuck::{Pod, Zeroable};
 use wgpu::{
     BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType, BufferBinding,
     BufferBindingType, BufferDescriptor, BufferUsages, CommandEncoder, ShaderStages,
@@ -65,6 +70,14 @@ struct SortBindGroupKey {
     effect_sort_metadata: BufferId,
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Default, Pod, Zeroable, ShaderType)]
+struct GpuSortKeyValuePair {
+    key: u32,
+    key2: u32,
+    value: u32,
+}
+
 #[derive(Resource)]
 pub struct SortBindGroups {
     /// Render device.
@@ -72,12 +85,10 @@ pub struct SortBindGroups {
     /// Sort-fill pass compute shader.
     sort_fill_shader: Handle<Shader>,
     /// GPU buffer of key-value pairs to sort.
-    sort_buffer: Buffer,
+    sort_buffer: RawBufferVec<GpuSortKeyValuePair>,
     /// GPU buffer containing the [`GpuDispatchIndirect`] structs for the
     /// sort-fill and sort passes.
     indirect_buffer: GpuBuffer<GpuDispatchIndirect>,
-    /// GPU buffer of sort metadata.
-    sort_metadata_buffer: AlignedBufferVec<GpuEffectSortMetadata>,
     /// Bind group layouts for group #0 of the sort-fill compute pass.
     sort_fill_bind_group_layouts:
         HashMap<SortFillBindGroupLayoutKey, (BindGroupLayout, CachedComputePipelineId)>,
@@ -109,12 +120,7 @@ impl SortBindGroups {
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
         let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
 
-        let sort_buffer = render_device.create_buffer(&BufferDescriptor {
-            label: Some("hanabi:buffer:sort:pairs"),
-            size: 3 * 1024 * 1024,
-            usage: BufferUsages::COPY_DST | BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        let sort_buffer = RawBufferVec::new(BufferUsages::STORAGE);
 
         let indirect_buffer_size = 3 * 1024;
         let indirect_buffer = render_device.create_buffer(&BufferDescriptor {
@@ -130,15 +136,6 @@ impl SortBindGroups {
             indirect_buffer,
             indirect_buffer_size as u32,
             Some("hanabi:buffer:sort:indirect".to_string()),
-        );
-
-        let item_align = GpuLimits::from_device(render_device)
-            .storage_buffer_align()
-            .get() as u64;
-        let sort_metadata_buffer = AlignedBufferVec::new(
-            BufferUsages::STORAGE,
-            NonZeroU64::new(item_align),
-            Some("hanabi:buffer:sort_metadata".to_string()),
         );
 
         let sort_bind_group_layout = render_device.create_bind_group_layout(
@@ -257,7 +254,6 @@ impl SortBindGroups {
             sort_fill_shader,
             sort_buffer,
             indirect_buffer,
-            sort_metadata_buffer,
             sort_fill_bind_group_layouts: default(),
             sort_fill_bind_groups: default(),
             sort_bind_groups: default(),
@@ -286,8 +282,8 @@ impl SortBindGroups {
 
     #[inline]
     #[allow(dead_code)]
-    pub fn sort_buffer(&self) -> &Buffer {
-        &self.sort_buffer
+    pub fn sort_buffer(&self) -> Option<&Buffer> {
+        self.sort_buffer.buffer()
     }
 
     #[inline]
@@ -316,6 +312,14 @@ impl SortBindGroups {
     #[inline]
     pub fn write_buffers(&self, command_encoder: &mut CommandEncoder) {
         self.indirect_buffer.write_buffers(command_encoder);
+    }
+
+    #[inline]
+    pub fn write_sort_buffer(&mut self, render_device: &RenderDevice, render_queue: &RenderQueue) {
+        if self.sort_buffer.is_empty() {
+            self.sort_buffer.push(default());
+        }
+        self.sort_buffer.write_buffer(render_device, render_queue);
     }
 
     #[inline]
@@ -475,62 +479,67 @@ impl SortBindGroups {
                 // happy.
                 let key = SortFillBindGroupLayoutKey::from_particle_layout(particle_layout)?;
                 let layout = &self.sort_fill_bind_group_layouts.get(&key).ok_or(())?.0;
-                entry.insert(self.render_device.create_bind_group(
-                    "hanabi:bind_group:sort_fill",
-                    layout,
-                    &[
-                        // @group(0) @binding(0) var<storage, read_write> pairs:
-                        // array<KeyValuePair>;
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: &self.sort_buffer,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(1) var<storage, read> particle_buffer:
-                        // ParticleBuffer;
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: particle,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(2) var<storage, read> indirect_index_buffer :
-                        // array<u32>;
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: indirect_index,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(3) var<storage, read> effect_metadata :
-                        // EffectMetadata;
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: effect_metadata,
-                                offset: 0,
-                                size: Some(effect_metadata_size),
-                            }),
-                        },
-                        // @group(0) @binding(4) var<storage, read_write>
-                        // effect_sort_metadata : EffectSortMetadataAtomic;
-                        BindGroupEntry {
-                            binding: 4,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: effect_sort_metadata,
-                                offset: 0,
-                                size: Some(sort_metadata_size),
-                            }),
-                        },
-                    ],
-                ))
+                entry.insert(
+                    self.render_device.create_bind_group(
+                        "hanabi:bind_group:sort_fill",
+                        layout,
+                        &[
+                            // @group(0) @binding(0) var<storage, read_write> pairs:
+                            // array<KeyValuePair>;
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: self
+                                        .sort_buffer
+                                        .buffer()
+                                        .expect("Sort buffer should be allocated by now"),
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(1) var<storage, read> particle_buffer:
+                            // ParticleBuffer;
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: particle,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(2) var<storage, read> indirect_index_buffer :
+                            // array<u32>;
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: indirect_index,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(3) var<storage, read> effect_metadata :
+                            // EffectMetadata;
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: effect_metadata,
+                                    offset: 0,
+                                    size: Some(effect_metadata_size),
+                                }),
+                            },
+                            // @group(0) @binding(4) var<storage, read_write>
+                            // effect_sort_metadata : EffectSortMetadataAtomic;
+                            BindGroupEntry {
+                                binding: 4,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: effect_sort_metadata,
+                                    offset: 0,
+                                    size: Some(sort_metadata_size),
+                                }),
+                            },
+                        ],
+                    ),
+                )
             }
         };
         Ok(bind_group)
@@ -560,7 +569,11 @@ impl SortBindGroups {
     ) -> Result<&BindGroup, ()> {
         let key = SortCopyBindGroupKey {
             indirect_index: indirect_index_buffer.id(),
-            sort: self.sort_buffer.id(),
+            sort: self
+                .sort_buffer
+                .buffer()
+                .expect("Sort buffer must be present")
+                .id(),
             effect_metadata: effect_metadata_buffer.id(),
             effect_sort_metadata: effect_sort_metadata_buffer.id(),
         };
@@ -575,51 +588,56 @@ impl SortBindGroups {
                 let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
                 let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
 
-                entry.insert(self.render_device.create_bind_group(
-                    "hanabi:bind_group:sort_copy",
-                    &self.sort_copy_bind_group_layout,
-                    &[
-                        // @group(0) @binding(0) var<storage, read_write> indirect_index_buffer
-                        // : IndirectIndexBuffer;
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: indirect_index_buffer,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(1) var<storage, read> sort_buffer : SortBuffer;
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: &self.sort_buffer,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(2) var<storage, read> effect_metadata :
-                        // EffectMetadata;
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: effect_metadata_buffer,
-                                offset: 0,
-                                size: Some(effect_metadata_size),
-                            }),
-                        },
-                        // @group(0) @binding(3) var<storage, read>
-                        // effect_sort_metadata : EffectSortMetadata;
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: effect_sort_metadata_buffer,
-                                offset: 0,
-                                size: Some(sort_metadata_size),
-                            }),
-                        },
-                    ],
-                ))
+                entry.insert(
+                    self.render_device.create_bind_group(
+                        "hanabi:bind_group:sort_copy",
+                        &self.sort_copy_bind_group_layout,
+                        &[
+                            // @group(0) @binding(0) var<storage, read_write> indirect_index_buffer
+                            // : IndirectIndexBuffer;
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: indirect_index_buffer,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(1) var<storage, read> sort_buffer : SortBuffer;
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: self
+                                        .sort_buffer
+                                        .buffer()
+                                        .expect("Sort buffer must be present"),
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(2) var<storage, read> effect_metadata :
+                            // EffectMetadata;
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: effect_metadata_buffer,
+                                    offset: 0,
+                                    size: Some(effect_metadata_size),
+                                }),
+                            },
+                            // @group(0) @binding(3) var<storage, read>
+                            // effect_sort_metadata : EffectSortMetadata;
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: effect_sort_metadata_buffer,
+                                    offset: 0,
+                                    size: Some(sort_metadata_size),
+                                }),
+                            },
+                        ],
+                    ),
+                )
             }
         };
         Ok(bind_group)
@@ -633,7 +651,11 @@ impl SortBindGroups {
     ) -> Option<&BindGroup> {
         let key = SortCopyBindGroupKey {
             indirect_index,
-            sort: self.sort_buffer.id(),
+            sort: self
+                .sort_buffer
+                .buffer()
+                .expect("Sort buffer must be present")
+                .id(),
             effect_metadata,
             effect_sort_metadata,
         };
@@ -658,7 +680,10 @@ impl SortBindGroups {
                         BindGroupEntry {
                             binding: 0,
                             resource: BindingResource::Buffer(BufferBinding {
-                                buffer: &self.sort_buffer,
+                                buffer: self
+                                    .sort_buffer
+                                    .buffer()
+                                    .expect("Sort buffer must be present"),
                                 offset: 0,
                                 size: None,
                             }),
@@ -677,5 +702,20 @@ impl SortBindGroups {
                 );
                 sort_bind_group
             }))
+    }
+
+    pub(crate) fn clear_sort_buffer(&mut self) {
+        self.sort_buffer.clear();
+    }
+
+    pub(crate) fn allocate_sort_buffer_slots(&mut self, len: u32) -> Range<u32> {
+        // FIXME: This is really inefficient. We don't need the CPU side buffer
+        // at all!
+        let start = self.sort_buffer.len() as u32;
+        self.sort_buffer.reserve_internal(len as usize);
+        for _ in 0..len {
+            self.sort_buffer.push(default());
+        }
+        start..(start + len)
     }
 }

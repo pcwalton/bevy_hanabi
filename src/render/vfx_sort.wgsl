@@ -3,10 +3,8 @@
 struct KeyValuePair {
     /// Sorting key.
     key: u32,
-#ifdef HAS_DUAL_KEY
     /// Secondary sorting key. Sorts value with the same primary key.
     key2: u32,
-#endif
     /// Value associated with the sort key(s), generally an index to some other data.
     /// Copied as is and otherwise ignored by the sorting algorithm.
     value: u32,
@@ -36,18 +34,20 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         return;
     }
 
+    // TODO: Don't use a dynamic offset here; instead, index an effect sort
+    // metadata array.
+    let first_sort_buffer_index = i32(effect_sort_metadata.first_sort_buffer_index);
+    let last_sort_buffer_index = i32(effect_sort_metadata.last_sort_buffer_index);
+
     // Insertion sort
-    let num_items = sort_buffer.count;
+    let num_items = last_sort_buffer_index - first_sort_buffer_index;
     for (var i: i32 = 1; i < num_items; i += 1) {
-        var kv = sort_buffer.pairs[i];
+        var kv = sort_buffer[first_sort_buffer_index + i];
         var j = i;
-        while (j > 0 && compare_greater(sort_buffer.pairs[j - 1], kv)) {
-            sort_buffer.pairs[j] = sort_buffer.pairs[j - 1];
+        while (j > 0 && compare_greater(sort_buffer[first_sort_buffer_index + j - 1], kv)) {
+            sort_buffer[first_sort_buffer_index + j] = sort_buffer[first_sort_buffer_index + j - 1];
             j -= 1;
         }
-        sort_buffer.pairs[j] = kv;
+        sort_buffer[first_sort_buffer_index + j] = kv;
     }
-
-    // Clear for next effect
-    sort_buffer.count = 0;
 }

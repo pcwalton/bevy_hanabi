@@ -2946,11 +2946,6 @@ impl GpuLimits {
     pub fn effect_metadata_offset(&self, buffer_index: u32) -> u64 {
         self.effect_metadata_aligned_size.get() as u64 * buffer_index as u64
     }
-
-    /// Byte alignment for [`GpuEffectMetadata`].
-    pub fn effect_metadata_size(&self) -> NonZeroU64 {
-        NonZeroU64::new(self.effect_metadata_aligned_size.get() as u64).unwrap()
-    }
 }
 
 /// Global resource containing the GPU data to draw all the particle effects in
@@ -4623,6 +4618,7 @@ pub(crate) fn batch_effects(
     trace!("Batching {} effects...", q_cached_effects.iter().len());
 
     sorted_effect_batches.clear();
+    sort_bind_groups.clear_sort_buffer();
 
     for entity in effect_sorter
         .effects
@@ -4680,6 +4676,21 @@ pub(crate) fn batch_effects(
         // of the ribbon die (since we can't guarantee a linear lifetime through the
         // ribbon).
         if input.layout_flags.contains(LayoutFlags::RIBBONS) {
+            // Allocate space in the sort buffer.
+
+            let sort_buffer_range =
+                sort_bind_groups.allocate_sort_buffer_slots(effect_batch.slice.len() as u32);
+
+            let sort_metadata_index =
+                effects_meta
+                    .effect_sort_metadata_buffer
+                    .push(GpuEffectSortMetadata {
+                        first_sort_buffer_index: sort_buffer_range.start,
+                        // This gets incremented in `vfx_sort_fill`.
+                        last_sort_buffer_index: sort_buffer_range.start,
+                    });
+            effect_batch.sort_metadata_index = Some(sort_metadata_index as u32);
+
             // This buffer is allocated in prepare_effects(), so should always be available
             let Some(effect_metadata_buffer) = effects_meta.effect_metadata_buffer.buffer() else {
                 error!("Failed to find effect metadata buffer. This is a bug.");
@@ -4908,6 +4919,7 @@ pub(crate) fn batch_effects(
 /// Uploads buffers that were prepared in [`batch_effects`] to the GPU.
 pub(crate) fn prepare_late_gpu_resources(
     mut effects_meta: ResMut<EffectsMeta>,
+    mut sort_bind_groups: ResMut<SortBindGroups>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
@@ -4938,6 +4950,13 @@ pub(crate) fn prepare_late_gpu_resources(
         &mut effects_meta.update_dispatch_indirect_buffer,
         &render_device,
     );
+    ensure_aligned_buffer_nonempty_and_write(
+        &mut effects_meta.effect_sort_metadata_buffer,
+        &render_device,
+        &render_queue,
+    );
+
+    sort_bind_groups.write_sort_buffer(&render_device, &render_queue);
 
     fn ensure_aligned_buffer_nonempty_and_write<T>(
         buffer: &mut AlignedBufferVec<T>,
@@ -7342,7 +7361,7 @@ impl Node for VfxSimulateNode {
         vec![]
     }
 
-    fn update(&mut self, _world: &mut World) {}
+    fn update(&mut self, world: &mut World) {}
 
     fn run(
         &self,
@@ -7835,6 +7854,14 @@ impl Node for VfxSimulateNode {
                 let indirect_offset =
                     sort_bind_groups.get_indirect_dispatch_byte_offset(indirect_dispatch_index);
 
+                let effect_sort_metadata_offset =
+                    effects_meta.effect_sort_metadata_buffer.dynamic_offset(
+                        effect_batch
+                            .sort_metadata_index
+                            .expect("Sort metadata index should have been set at this point")
+                            as usize,
+                    );
+
                 // Fill the sort buffer with the key-value pairs to sort
                 {
                     compute_pass.push_debug_group("hanabi:sort_fill");
@@ -7873,7 +7900,11 @@ impl Node for VfxSimulateNode {
                             .effect_metadata_buffer_table_id
                             .0,
                     ) as u32;
-                    compute_pass.set_bind_group(0, bind_group, &[effect_metadata_offset]);
+                    compute_pass.set_bind_group(
+                        0,
+                        bind_group,
+                        &[effect_metadata_offset, effect_sort_metadata_offset],
+                    );
 
                     compute_pass
                         .dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
@@ -7898,7 +7929,11 @@ impl Node for VfxSimulateNode {
                     if let Some(sort_bind_group) =
                         sort_bind_groups.sort_bind_group(effect_sort_metadata_buffer.id())
                     {
-                        compute_pass.set_bind_group(0, sort_bind_group, &[]);
+                        compute_pass.set_bind_group(
+                            0,
+                            sort_bind_group,
+                            &[effect_sort_metadata_offset],
+                        );
                         compute_pass
                             .dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
                         trace!("Dispatched sort with indirect offset +{indirect_offset}");
@@ -7939,7 +7974,11 @@ impl Node for VfxSimulateNode {
                                 .dispatch_buffer_indices
                                 .effect_metadata_buffer_table_id,
                         );
-                    compute_pass.set_bind_group(0, bind_group, &[effect_metadata_offset]);
+                    compute_pass.set_bind_group(
+                        0,
+                        bind_group,
+                        &[effect_metadata_offset, effect_sort_metadata_offset],
+                    );
 
                     compute_pass
                         .dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);

@@ -51,8 +51,8 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let key_offset = particle_offset + effect_metadata.sort_key_offset;
     let key2_offset = particle_offset + effect_metadata.sort_key2_offset;
 
-    let pair_index = atomicAdd(&sort_buffer.count, 1);
-    sort_buffer.pairs[pair_index].key = particle_buffer.data[key_offset];
-    sort_buffer.pairs[pair_index].key2 = particle_buffer.data[key2_offset];
-    sort_buffer.pairs[pair_index].value = particle_index;
+    let pair_index = atomicAdd(&effect_sort_metadata.last_sort_buffer_index, 1u);
+    sort_buffer[pair_index].key = particle_buffer.data[key_offset];
+    sort_buffer[pair_index].key2 = particle_buffer.data[key2_offset];
+    sort_buffer[pair_index].value = particle_index;
 }

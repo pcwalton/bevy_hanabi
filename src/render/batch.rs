@@ -81,6 +81,8 @@ pub(crate) struct EffectBatch {
     pub spawner_base: u32,
     /// The indices within the various indirect dispatch buffers.
     pub dispatch_buffer_indices: DispatchBufferIndices,
+    /// Index within the sort metadata buffer, if this has ribbons.
+    pub sort_metadata_index: Option<u32>,
     /// Particle layout shared by all batched effects and groups.
     pub particle_layout: ParticleLayout,
     /// Flags describing the render layout.
@@ -384,6 +386,7 @@ impl EffectBatch {
             cached_effect_events: cached_effect_events.cloned(),
             cached_mesh_location: cached_mesh_location.cloned(),
             sort_fill_indirect_dispatch_index: None, // set later as needed
+            sort_metadata_index: None, // set later as needed
             position: input.position,
             main_entity,
         }

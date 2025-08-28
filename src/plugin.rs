@@ -328,10 +328,11 @@ impl Plugin for HanabiPlugin {
         // Insert the properly aligned `vfx_common.wgsl` shader into Assets<Shader>, so
         // that the automated Bevy shader processing finds it as an import. This is used
         // for init/update/render shaders (but not the indirect one).
+        let min_storage_buffer_offset_alignment =
+            render_device.limits().min_storage_buffer_offset_alignment;
         {
-            let common_shader = HanabiPlugin::make_common_shader(
-                render_device.limits().min_storage_buffer_offset_alignment,
-            );
+            let common_shader =
+                HanabiPlugin::make_common_shader(min_storage_buffer_offset_alignment);
             let mut assets = app.world_mut().resource_mut::<Assets<Shader>>();
             assets.insert(&HANABI_COMMON_TEMPLATE_HANDLE, common_shader);
         }
@@ -352,8 +353,15 @@ impl Plugin for HanabiPlugin {
             let indirect_shader_events = HanabiPlugin::make_indirect_shader(align, true);
             let indirect_batch_shader = HanabiPlugin::make_indirect_batch_shader(align);
             let render_batch_shader = HanabiPlugin::make_render_batch_shader(align);
+
+            let effect_sort_metadata_padding_code =
+                GpuEffectSortMetadata::padding_code(min_storage_buffer_offset_alignment);
+
             let sort_fill_shader = Shader::from_wgsl(
-                include_str!("render/vfx_sort_fill.wgsl"),
+                include_str!("render/vfx_sort_fill.wgsl").replace(
+                    "{{EFFECT_SORT_METADATA_PADDING}}",
+                    &effect_sort_metadata_padding_code,
+                ),
                 std::path::Path::new(file!())
                     .parent()
                     .unwrap()
