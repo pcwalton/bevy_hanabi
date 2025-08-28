@@ -6861,6 +6861,15 @@ pub(crate) fn prepare_bind_groups(
         if effect_batch.layout_flags.contains(LayoutFlags::RIBBONS) {
             let effect_buffer = effect_cache.get_buffer(effect_batch.buffer_index).unwrap();
 
+            let render_batch_descriptor_buffer = effects_meta
+                .render_batch_descriptor_buffer
+                .buffer()
+                .expect("Batch descriptor buffer must be present");
+            let render_batch_effect_index_buffer = effects_meta
+                .render_batch_effect_index_buffer
+                .buffer()
+                .expect("Batch effect index buffer must be present");
+
             // Bind group @0 of sort-fill pass
             let particle_buffer = effect_buffer.particle_buffer();
             let indirect_index_buffer = effect_buffer.indirect_index_buffer();
@@ -6873,14 +6882,8 @@ pub(crate) fn prepare_bind_groups(
                 indirect_index_buffer,
                 effect_metadata_buffer,
                 effect_sort_metadata_buffer,
-                effects_meta
-                    .render_batch_descriptor_buffer
-                    .buffer()
-                    .expect("Batch descriptor buffer must be present"),
-                effects_meta
-                    .render_batch_effect_index_buffer
-                    .buffer()
-                    .expect("Batch effect index buffer must be present"),
+                render_batch_descriptor_buffer,
+                render_batch_effect_index_buffer,
             ) {
                 error!(
                     "Failed to create sort-fill bind group @0 for ribbon effect: {:?}",
@@ -6895,6 +6898,8 @@ pub(crate) fn prepare_bind_groups(
                 indirect_index_buffer,
                 effect_metadata_buffer,
                 effect_sort_metadata_buffer,
+                render_batch_descriptor_buffer,
+                render_batch_effect_index_buffer,
             ) {
                 error!(
                     "Failed to create sort-copy bind group @0 for ribbon effect: {:?}",
@@ -7982,15 +7987,26 @@ impl Node for VfxSimulateNode {
                 compute_pass.pop_debug_group();
             }
 
-            for effect_batch in sorted_effect_batches.iter() {
-                let Some(effect_buffer) = effect_cache.get_buffer(effect_batch.buffer_index) else {
+            for (_, render_batch) in sorted_effect_batches.render_batches.iter() {
+                let Some(&representative_effect_batch_index) =
+                    render_batch.effect_batch_indices.first()
+                else {
+                    continue;
+                };
+                let Some(representative_effect_batch) =
+                    sorted_effect_batches.get(representative_effect_batch_index)
+                else {
+                    continue;
+                };
+
+                let Some(effect_buffer) =
+                    effect_cache.get_buffer(representative_effect_batch.buffer_index)
+                else {
                     warn!("Missing sort-fill effect buffer.");
                     continue;
                 };
 
-                // TODO: This is wrong. Dispatch needs to be per-render-batch,
-                // not per-effect.
-                let indirect_dispatch_index = *effect_batch
+                let indirect_dispatch_index = *representative_effect_batch
                     .sort_fill_indirect_dispatch_index
                     .as_ref()
                     .unwrap();
@@ -8012,6 +8028,9 @@ impl Node for VfxSimulateNode {
                     return Ok(());
                 }
 
+                let batch_descriptor_offset =
+                    render_batch.batch_descriptor_index * batch_descriptor_size;
+
                 // Bind group sort_copy@0
                 let indirect_index_buffer = effect_buffer.indirect_index_buffer();
                 let Some(bind_group) = sort_bind_groups.sort_copy_bind_group(
@@ -8023,24 +8042,22 @@ impl Node for VfxSimulateNode {
                     continue;
                 };
                 let effect_metadata_offset = effects_meta.effect_metadata_buffer.dynamic_offset(
-                    effect_batch
+                    representative_effect_batch
                         .dispatch_buffer_indices
                         .effect_metadata_buffer_table_id,
                 );
                 let effect_sort_metadata_offset =
                     effects_meta.effect_sort_metadata_buffer.dynamic_offset(
-                        effect_batch
+                        representative_effect_batch
                             .dispatch_buffer_indices
                             .effect_sort_metadata_index
                             .expect("Sort metadata index should have been set at this point"),
                     );
-                compute_pass.set_bind_group(
-                    0,
-                    bind_group,
-                    &[effect_metadata_offset, effect_sort_metadata_offset],
-                );
+                compute_pass.set_bind_group(0, bind_group, &[batch_descriptor_offset]);
 
-                compute_pass.dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
+                // FIXME: HACK
+                //compute_pass.dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
+                compute_pass.dispatch_workgroups(10, 1, 1);
                 trace!("Dispatched sort-copy with indirect offset +{indirect_offset}");
 
                 compute_pass.pop_debug_group();

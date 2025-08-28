@@ -187,12 +187,15 @@ impl SortBindGroups {
             zero_initialize_workgroup_memory: false,
         });
 
-        let effect_metadata_min_binding_size = GpuEffectMetadata::aligned_size(
-            render_device.limits().min_storage_buffer_offset_alignment,
-        );
+        let min_storage_buffer_offset_alignment =
+            render_device.limits().min_storage_buffer_offset_alignment;
+        let effect_metadata_min_binding_size =
+            GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
         let effect_sort_metadata_min_binding_size = GpuEffectSortMetadata::aligned_size(
             render_device.limits().min_storage_buffer_offset_alignment,
         );
+        let batch_descriptor_size =
+            GpuRenderBatchDescriptor::aligned_size(min_storage_buffer_offset_alignment);
 
         let sort_copy_bind_group_layout = render_device.create_bind_group_layout(
             "hanabi:bind_group_layout:sort_copy",
@@ -220,26 +223,51 @@ impl SortBindGroups {
                     },
                     count: None,
                 },
-                // @group(0) @binding(2) var<storage, read_write> effect_metadata : EffectMetadata;
+                // @group(0) @binding(2) var<storage, read_write>
+                // effect_metadata : array<EffectMetadata>;
                 BindGroupLayoutEntry {
                     binding: 2,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: true,
+                        has_dynamic_offset: false,
                         min_binding_size: Some(effect_metadata_min_binding_size),
                     },
                     count: None,
                 },
-                // @group(0) @binding(3) var<storage, read> effect_sort_metadata
-                // : EffectSortMetadata;
+                // @group(0) @binding(3) var<storage, read> batch_descriptor :
+                // BatchDescriptor;
                 BindGroupLayoutEntry {
                     binding: 3,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: true,
-                        min_binding_size: Some(effect_sort_metadata_min_binding_size),
+                        min_binding_size: Some(batch_descriptor_size),
+                    },
+                    count: None,
+                },
+                // @group(0) @binding(4) var<storage, read> batch_effect_indices
+                // : array<u32>;
+                BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // @group(0) @binding(5) var<storage, read> effect_sort_metadata
+                // : array<EffectSortMetadata>;
+                BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
                     count: None,
                 },
@@ -349,6 +377,8 @@ impl SortBindGroups {
                     .limits()
                     .min_storage_buffer_offset_alignment;
                 let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
+                let batch_descriptor_size =
+                    GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
                 let bind_group_layout = self.render_device.create_bind_group_layout(
                     "hanabi:bind_group_layout:sort_fill",
@@ -408,7 +438,7 @@ impl SortBindGroups {
                             ty: BindingType::Buffer {
                                 ty: BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: true,
-                                min_binding_size: Some(sort_metadata_size),
+                                min_binding_size: Some(batch_descriptor_size),
                             },
                             count: None,
                         },
@@ -504,8 +534,6 @@ impl SortBindGroups {
                     .render_device
                     .limits()
                     .min_storage_buffer_offset_alignment;
-                let sort_metadata_size =
-                    u64::from(GpuEffectSortMetadata::aligned_size(storage_alignment));
                 let render_batch_descriptor_size =
                     GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
@@ -622,6 +650,8 @@ impl SortBindGroups {
         indirect_index_buffer: &Buffer,
         effect_metadata_buffer: &Buffer,
         effect_sort_metadata_buffer: &Buffer,
+        render_batch_descriptor_buffer: &Buffer,
+        batch_effect_indices_buffer: &Buffer,
     ) -> Result<&BindGroup, ()> {
         let key = SortCopyBindGroupKey {
             indirect_index: indirect_index_buffer.id(),
@@ -643,6 +673,8 @@ impl SortBindGroups {
                     .min_storage_buffer_offset_alignment;
                 let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
                 let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
+                let render_batch_descriptor_size =
+                    GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
                 entry.insert(
                     self.render_device.create_bind_group(
@@ -678,17 +710,37 @@ impl SortBindGroups {
                                 resource: BindingResource::Buffer(BufferBinding {
                                     buffer: effect_metadata_buffer,
                                     offset: 0,
-                                    size: Some(effect_metadata_size),
+                                    size: None,
                                 }),
                             },
                             // @group(0) @binding(3) var<storage, read>
-                            // effect_sort_metadata : EffectSortMetadata;
+                            // batch_descriptor : BatchDescriptor;
                             BindGroupEntry {
                                 binding: 3,
                                 resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: render_batch_descriptor_buffer,
+                                    offset: 0,
+                                    size: Some(render_batch_descriptor_size),
+                                }),
+                            },
+                            // @group(0) @binding(4) var<storage, read>
+                            // batch_effect_indices : array<u32>;
+                            BindGroupEntry {
+                                binding: 4,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: batch_effect_indices_buffer,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(5) var<storage, read>
+                            // effect_sort_metadata : EffectSortMetadata;
+                            BindGroupEntry {
+                                binding: 5,
+                                resource: BindingResource::Buffer(BufferBinding {
                                     buffer: effect_sort_metadata_buffer,
                                     offset: 0,
-                                    size: Some(sort_metadata_size),
+                                    size: None,
                                 }),
                             },
                         ],
