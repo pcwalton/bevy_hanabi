@@ -1,18 +1,19 @@
 #import bevy_hanabi::vfx_common::{
-    BatchDescriptor, EffectMetadata, EffectSortMetadata, IndirectDispatch
+    BatchDescriptor, BatchMetadata, EffectMetadata, EffectSortMetadata, IndirectDispatch
 }
 
-@group(0) @binding(0) var<storage, read> batch_descriptors_requiring_sorting : array<u32>;
-@group(0) @binding(1) var<storage, read> batch_descriptors : array<BatchDescriptor>;
-@group(0) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
-@group(0) @binding(3) var<storage, read_write> effect_metadata : array<EffectMetadata>;
-@group(0) @binding(4) var<storage, read> effect_sort_metadata : array<EffectSortMetadata>;
-@group(0) @binding(5) var<storage, read_write> dispatch_indirect_buffer : array<IndirectDispatch>;
+@group(0) @binding(0) var<uniform> batch_metadata : BatchMetadata;
+@group(0) @binding(1) var<storage, read> batch_descriptors_requiring_sorting : array<u32>;
+@group(0) @binding(2) var<storage, read> batch_descriptors : array<BatchDescriptor>;
+@group(0) @binding(3) var<storage, read> batch_effect_indices : array<u32>;
+@group(0) @binding(4) var<storage, read_write> effect_metadata : array<EffectMetadata>;
+@group(0) @binding(5) var<storage, read> effect_sort_metadata : array<EffectSortMetadata>;
+@group(0) @binding(6) var<storage, read_write> dispatch_indirect_buffer : array<IndirectDispatch>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let thread_index = global_invocation_id.x;
-    if (thread_index >= arrayLength(&batch_descriptors_requiring_sorting)) {
+    if (thread_index >= batch_metadata.total_render_batches_requiring_sorting_count) {
         return;
     }
 

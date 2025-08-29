@@ -190,6 +190,7 @@ struct EffectMetadata {
 
 struct BatchMetadata {
     total_batch_count: u32,
+    total_render_batches_requiring_sorting_count: u32,
 }
 
 struct BatchDescriptor {

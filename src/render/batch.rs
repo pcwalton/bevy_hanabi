@@ -3,10 +3,7 @@ use std::{fmt::Debug, num::NonZeroU32, ops::Range};
 use bevy::{
     ecs::entity::EntityHashMap,
     prelude::*,
-    render::{
-        render_resource::{BufferId, CachedComputePipelineId},
-        sync_world::MainEntity,
-    },
+    render::{render_resource::CachedComputePipelineId, sync_world::MainEntity},
 };
 use fixedbitset::FixedBitSet;
 use indexmap::IndexMap;
@@ -103,7 +100,6 @@ pub(crate) struct EffectBatch {
     pub entities: Vec<u32>,
     pub cached_effect_events: Option<CachedEffectEvents>,
     pub cached_mesh_location: Option<CachedMeshLocation>,
-    pub sort_dispatch_indirect_buffer_index: Option<u32>,
     pub position: Vec3,
     pub main_entity: MainEntity,
 }
@@ -386,7 +382,6 @@ impl EffectBatch {
             entities: vec![input.main_entity.id().index()],
             cached_effect_events: cached_effect_events.cloned(),
             cached_mesh_location: cached_mesh_location.cloned(),
-            sort_dispatch_indirect_buffer_index: None, // set later as needed
             position: input.position,
             main_entity,
         }
