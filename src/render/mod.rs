@@ -479,6 +479,7 @@ pub(crate) struct GpuRenderBatchDescriptor {
 pub(crate) struct GpuEffectSortMetadata {
     first_sort_buffer_index: u32,
     last_sort_buffer_index: u32,
+    indirect_command_index: u32,
 }
 
 #[repr(C)]
@@ -2980,6 +2981,7 @@ pub struct EffectsMeta {
     /// Global shared GPU buffer storing the various indirect dispatch structs
     /// for the indirect dispatch of the Update pass.
     update_dispatch_indirect_buffer: GpuBuffer<GpuDispatchIndirect>,
+    sort_dispatch_indirect_buffer: RawBufferVec<GpuDispatchIndirect>,
     /// Global shared GPU buffer storing the various `EffectMetadata`
     /// structs for the active effect instances.
     effect_metadata_buffer: BufferTable<GpuEffectMetadata>,
@@ -2988,6 +2990,8 @@ pub struct EffectsMeta {
     render_batch_metadata_buffer: UniformBuffer<GpuRenderBatchMetadata>,
     render_batch_effect_index_buffer: RawBufferVec<u32>,
     render_batch_descriptor_buffer: AlignedBufferVec<GpuRenderBatchDescriptor>,
+    render_batch_descriptors_requiring_sorting_buffer: RawBufferVec<u32>,
+    total_render_batches_requiring_sorting_count: u32,
     indexed_indirect_draw_command_buffer: RawBufferVec<GpuIndexedIndirectDrawCommand>,
     non_indexed_indirect_draw_command_buffer: RawBufferVec<GpuNonIndexedIndirectDrawCommand>,
     /// Various GPU limits and aligned sizes lazily allocated and cached for
@@ -3043,6 +3047,9 @@ impl EffectsMeta {
                 BufferUsages::STORAGE | BufferUsages::INDIRECT,
                 Some("hanabi:buffer:update_dispatch_indirect".to_string()),
             ),
+            sort_dispatch_indirect_buffer: RawBufferVec::new(
+                BufferUsages::STORAGE | BufferUsages::INDIRECT,
+            ),
             effect_metadata_buffer: BufferTable::new(
                 BufferUsages::STORAGE | BufferUsages::INDIRECT,
                 NonZeroU64::new(item_align),
@@ -3061,6 +3068,10 @@ impl EffectsMeta {
                 NonZeroU64::new(item_align),
                 Some("hanabi:buffer:render_batch_descriptor".to_string()),
             ),
+            render_batch_descriptors_requiring_sorting_buffer: RawBufferVec::new(
+                BufferUsages::STORAGE,
+            ),
+            total_render_batches_requiring_sorting_count: 0,
             indexed_indirect_draw_command_buffer: RawBufferVec::new(
                 BufferUsages::STORAGE | BufferUsages::INDIRECT,
             ),
@@ -4704,6 +4715,11 @@ pub(crate) fn batch_effects(
             let sort_buffer_range =
                 sort_bind_groups.allocate_sort_buffer_slots(effect_batch.slice.len() as u32);
 
+            // Allocate a GpuDispatchIndirect entry
+            let sort_dispatch_indirect_buffer_index = sort_bind_groups.allocate_indirect_dispatch();
+            effect_batch.sort_dispatch_indirect_buffer_index =
+                Some(sort_dispatch_indirect_buffer_index);
+
             let effect_metadata_index = effect_batch
                 .dispatch_buffer_indices
                 .effect_metadata_buffer_table_id
@@ -4718,6 +4734,7 @@ pub(crate) fn batch_effects(
                         first_sort_buffer_index: sort_buffer_range.start,
                         // This gets incremented in `vfx_sort_fill`.
                         last_sort_buffer_index: sort_buffer_range.start,
+                        indirect_command_index: sort_dispatch_indirect_buffer_index,
                     },
                 );
             }
@@ -4727,11 +4744,6 @@ pub(crate) fn batch_effects(
                 error!("Failed to find effect metadata buffer. This is a bug.");
                 continue;
             };
-
-            // Allocate a GpuDispatchIndirect entry
-            let sort_fill_indirect_dispatch_index = sort_bind_groups.allocate_indirect_dispatch();
-            effect_batch.sort_fill_indirect_dispatch_index =
-                Some(sort_fill_indirect_dispatch_index);
 
             // Enqueue a fill dispatch operation which reads GpuEffectMetadata::alive_count,
             // compute a number of workgroups to dispatch based on that particle count, and
@@ -4776,7 +4788,7 @@ pub(crate) fn batch_effects(
                 // (hence the None below). This is not really a general solution, so should be
                 // reviewed.
                 let dst_offset = sort_bind_groups
-                    .get_indirect_dispatch_byte_offset(sort_fill_indirect_dispatch_index)
+                    .get_indirect_dispatch_byte_offset(sort_dispatch_indirect_buffer_index)
                     / 4;
                 sort_queue.enqueue(
                     GpuBufferOperationType::FillDispatchArgs,
@@ -4826,12 +4838,17 @@ pub(crate) fn batch_effects(
 
     // Clear out the render batch buffers.
     effects_meta.total_render_batch_count = 0;
+    effects_meta.total_render_batches_requiring_sorting_count = 0;
     effects_meta.render_batch_effect_index_buffer.clear();
     effects_meta.render_batch_descriptor_buffer.clear();
+    effects_meta
+        .render_batch_descriptors_requiring_sorting_buffer
+        .clear();
     effects_meta.indexed_indirect_draw_command_buffer.clear();
     effects_meta
         .non_indexed_indirect_draw_command_buffer
         .clear();
+    effects_meta.sort_dispatch_indirect_buffer.clear();
     effects_meta.update_dispatch_indirect_buffer.clear();
 
     // Rebuild the render batch buffers.
@@ -4927,6 +4944,19 @@ pub(crate) fn batch_effects(
             continue;
         };
 
+        // If we need to allocate space in sort-related buffers, do that now.
+        if first_effect_batch
+            .layout_flags
+            .contains(LayoutFlags::RIBBONS)
+        {
+            effects_meta
+                .render_batch_descriptors_requiring_sorting_buffer
+                .push(effect_render_batch.batch_descriptor_index);
+            effect_render_batch.sort_dispatch_indirect_buffer_row_index =
+                effects_meta.sort_dispatch_indirect_buffer.push(default()) as u32;
+            effects_meta.total_render_batches_requiring_sorting_count += 1;
+        }
+
         commands
             .spawn(EffectDrawBatch {
                 representative_effect_batch_index: effect_render_batch.effect_batch_indices[0],
@@ -4961,8 +4991,18 @@ pub(crate) fn prepare_late_gpu_resources(
         &render_device,
         &render_queue,
     );
+    ensure_raw_buffer_nonempty_and_write(
+        &mut effects_meta.render_batch_descriptors_requiring_sorting_buffer,
+        &render_device,
+        &render_queue,
+    );
     ensure_aligned_buffer_nonempty_and_write(
         &mut effects_meta.render_batch_descriptor_buffer,
+        &render_device,
+        &render_queue,
+    );
+    ensure_raw_buffer_nonempty_and_write(
+        &mut effects_meta.sort_dispatch_indirect_buffer,
         &render_device,
         &render_queue,
     );
@@ -6869,13 +6909,37 @@ pub(crate) fn prepare_bind_groups(
                 .render_batch_effect_index_buffer
                 .buffer()
                 .expect("Batch effect index buffer must be present");
+            let render_batch_descriptors_requiring_sorting_buffer = effects_meta
+                .render_batch_descriptors_requiring_sorting_buffer
+                .buffer()
+                .expect("Batch descriptors requiring sorting buffer must be present");
+            let sort_dispatch_indirect_buffer = effects_meta
+                .sort_dispatch_indirect_buffer
+                .buffer()
+                .expect("Sort dispatch indirect buffer must be present");
+
+            // Bind group @0 of sort-indirect-batch pass
+            let effect_metadata_buffer = effects_meta.effect_metadata_buffer.buffer().unwrap();
+            let effect_sort_metadata_buffer =
+                effects_meta.effect_sort_metadata_buffer.buffer().unwrap();
+            if let Err(err) = sort_bind_groups.ensure_sort_indirect_batch_bind_group(
+                effect_metadata_buffer,
+                effect_sort_metadata_buffer,
+                render_batch_descriptor_buffer,
+                render_batch_effect_index_buffer,
+                sort_dispatch_indirect_buffer,
+                render_batch_descriptors_requiring_sorting_buffer,
+            ) {
+                error!(
+                    "Failed to create sort-indirect-batch bind group @0 for ribbon effect: {:?}",
+                    err
+                );
+                continue;
+            }
 
             // Bind group @0 of sort-fill pass
             let particle_buffer = effect_buffer.particle_buffer();
             let indirect_index_buffer = effect_buffer.indirect_index_buffer();
-            let effect_metadata_buffer = effects_meta.effect_metadata_buffer.buffer().unwrap();
-            let effect_sort_metadata_buffer =
-                effects_meta.effect_sort_metadata_buffer.buffer().unwrap();
             if let Err(err) = sort_bind_groups.ensure_sort_fill_bind_group(
                 &effect_batch.particle_layout,
                 particle_buffer,
@@ -7851,20 +7915,6 @@ impl Node for VfxSimulateNode {
             }
         }
 
-        // Compute sort fill dispatch pass - Fill the indirect dispatch structs for any
-        // batch of particles which needs sorting, based on the actual number of alive
-        // particles in the batch after their update in the compute update pass. Since
-        // particles may die during update, this may be different from the number of
-        // particles updated.
-        if let Some(queue_index) = sorted_effect_batches.dispatch_queue_index.as_ref() {
-            gpu_buffer_operations.dispatch(
-                *queue_index,
-                render_context,
-                utils_pipeline,
-                Some("hanabi:sort_fill_dispatch"),
-            );
-        }
-
         // Compute sort pass
         {
             let mut compute_pass =
@@ -7911,55 +7961,95 @@ impl Node for VfxSimulateNode {
                     continue;
                 };
 
-                let indirect_dispatch_index = *representative_effect_batch
-                    .sort_fill_indirect_dispatch_index
-                    .as_ref()
-                    .unwrap();
-                let indirect_offset =
-                    sort_bind_groups.get_indirect_dispatch_byte_offset(indirect_dispatch_index);
-
-                // Fill the sort buffer with the key-value pairs to sort
-                compute_pass.push_debug_group("hanabi:sort_fill");
-
-                // Fetch compute pipeline
-                let Some(pipeline_id) = sort_bind_groups
-                    .get_sort_fill_pipeline_id(&representative_effect_batch.particle_layout)
-                else {
-                    warn!("Missing sort-fill pipeline.");
-                    continue;
-                };
-                if compute_pass
-                    .set_cached_compute_pipeline(pipeline_id)
-                    .is_err()
+                // Create the indirect dispatch commands
                 {
+                    compute_pass.push_debug_group("hanabi:sort_indirect_batch");
+
+                    // Fetch compute pipeline
+                    let pipeline_id = sort_bind_groups.sort_indirect_batch_pipeline_id();
+
+                    if compute_pass
+                        .set_cached_compute_pipeline(pipeline_id)
+                        .is_err()
+                    {
+                        compute_pass.pop_debug_group();
+                        // FIXME: Bevy doesn't allow returning custom errors here…
+                    }
+
+                    // Bind group sort_indirect_batch@0
+                    let Some(bind_group) = sort_bind_groups.sort_indirect_batch_bind_group(
+                        effect_metadata_buffer.id(),
+                        effect_sort_metadata_buffer.id(),
+                    ) else {
+                        warn!("Missing sort-indirect-batch bind group.");
+                        continue;
+                    };
+                    compute_pass.set_bind_group(0, bind_group, &[]);
+
+                    const WORKGROUP_SIZE: u32 = 64;
+                    let batch_descriptors_requiring_sorting_count =
+                        effects_meta.total_render_batches_requiring_sorting_count;
+                    let spawn_count =
+                        batch_descriptors_requiring_sorting_count.div_ceil(WORKGROUP_SIZE);
+                    compute_pass.dispatch_workgroups(spawn_count, 1, 1);
+                    trace!(
+                        "Dispatched sort-indirect-batch for {:?} batch descriptors",
+                        batch_descriptors_requiring_sorting_count,
+                    );
+
                     compute_pass.pop_debug_group();
-                    // FIXME - Bevy doesn't allow returning custom errors here...
-                    return Ok(());
                 }
 
-                let batch_descriptor_offset =
-                    render_batch.batch_descriptor_index * batch_descriptor_size;
+                // Fill the sort buffer with the key-value pairs to sort
+                {
+                    compute_pass.push_debug_group("hanabi:sort_fill");
 
-                // Bind group sort_fill@0
-                let particle_buffer = effect_buffer.particle_buffer();
-                let indirect_index_buffer = effect_buffer.indirect_index_buffer();
-                let Some(bind_group) = sort_bind_groups.sort_fill_bind_group(
-                    particle_buffer.id(),
-                    indirect_index_buffer.id(),
-                    effect_metadata_buffer.id(),
-                    effect_sort_metadata_buffer.id(),
-                ) else {
-                    warn!("Missing sort-fill bind group.");
-                    continue;
-                };
-                compute_pass.set_bind_group(0, bind_group, &[batch_descriptor_offset]);
+                    let indirect_dispatch_index = *representative_effect_batch
+                        .sort_dispatch_indirect_buffer_index
+                        .as_ref()
+                        .unwrap();
+                    let indirect_offset =
+                        sort_bind_groups.get_indirect_dispatch_byte_offset(indirect_dispatch_index);
 
-                // FIXME: HACK
-                //compute_pass.dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
-                compute_pass.dispatch_workgroups(10, 1, 1);
-                trace!("Dispatched sort-fill with indirect offset +{indirect_offset}");
+                    // Fetch compute pipeline
+                    let Some(pipeline_id) = sort_bind_groups
+                        .get_sort_fill_pipeline_id(&representative_effect_batch.particle_layout)
+                    else {
+                        warn!("Missing sort-fill pipeline.");
+                        continue;
+                    };
+                    if compute_pass
+                        .set_cached_compute_pipeline(pipeline_id)
+                        .is_err()
+                    {
+                        compute_pass.pop_debug_group();
+                        // FIXME - Bevy doesn't allow returning custom errors here...
+                        return Ok(());
+                    }
 
-                compute_pass.pop_debug_group();
+                    let batch_descriptor_offset =
+                        render_batch.batch_descriptor_index * batch_descriptor_size;
+
+                    // Bind group sort_fill@0
+                    let particle_buffer = effect_buffer.particle_buffer();
+                    let indirect_index_buffer = effect_buffer.indirect_index_buffer();
+                    let Some(bind_group) = sort_bind_groups.sort_fill_bind_group(
+                        particle_buffer.id(),
+                        indirect_index_buffer.id(),
+                        effect_metadata_buffer.id(),
+                        effect_sort_metadata_buffer.id(),
+                    ) else {
+                        warn!("Missing sort-fill bind group.");
+                        continue;
+                    };
+                    compute_pass.set_bind_group(0, bind_group, &[batch_descriptor_offset]);
+
+                    compute_pass
+                        .dispatch_workgroups_indirect(indirect_buffer, indirect_offset as u64);
+                    trace!("Dispatched sort-fill with indirect offset +{indirect_offset}");
+
+                    compute_pass.pop_debug_group();
+                }
             }
 
             // Do the actual sort
@@ -8007,7 +8097,7 @@ impl Node for VfxSimulateNode {
                 };
 
                 let indirect_dispatch_index = *representative_effect_batch
-                    .sort_fill_indirect_dispatch_index
+                    .sort_dispatch_indirect_buffer_index
                     .as_ref()
                     .unwrap();
                 let indirect_offset =

@@ -221,6 +221,8 @@ struct NonIndexedIndirectDrawCommand {
 struct EffectSortMetadata {
     first_sort_buffer_index: u32,
     last_sort_buffer_index: u32,
+    // Index of the `IndirectDispatch` array in `dispatch_indirect_buffer`.
+    indirect_command_index: u32,
 
     {{EFFECT_SORT_METADATA_PADDING}}
 }

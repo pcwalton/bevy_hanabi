@@ -21,6 +21,8 @@ struct RawParticleBuffer {
 struct EffectSortMetadataAtomic {
     first_sort_buffer_index: u32,
     last_sort_buffer_index: atomic<u32>,
+    // Index of the `IndirectDispatch` array in `dispatch_indirect_buffer`.
+    indirect_command_index: u32,
 
     {{EFFECT_SORT_METADATA_PADDING}}
 }

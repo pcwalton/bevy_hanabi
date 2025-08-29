@@ -103,7 +103,7 @@ pub(crate) struct EffectBatch {
     pub entities: Vec<u32>,
     pub cached_effect_events: Option<CachedEffectEvents>,
     pub cached_mesh_location: Option<CachedMeshLocation>,
-    pub sort_fill_indirect_dispatch_index: Option<u32>,
+    pub sort_dispatch_indirect_buffer_index: Option<u32>,
     pub position: Vec3,
     pub main_entity: MainEntity,
 }
@@ -139,6 +139,7 @@ pub(crate) struct RenderBatch {
     ///
     /// [`EffectsMeta::update_dispatch_indirect_buffer`]: super::EffectsMeta::update_dispatch_indirect_buffer
     pub(crate) update_dispatch_indirect_buffer_row_index: u32,
+    pub(crate) sort_dispatch_indirect_buffer_row_index: u32,
 }
 
 impl SortedEffectBatches {
@@ -385,7 +386,7 @@ impl EffectBatch {
             entities: vec![input.main_entity.id().index()],
             cached_effect_events: cached_effect_events.cloned(),
             cached_mesh_location: cached_mesh_location.cloned(),
-            sort_fill_indirect_dispatch_index: None, // set later as needed
+            sort_dispatch_indirect_buffer_index: None, // set later as needed
             position: input.position,
             main_entity,
         }

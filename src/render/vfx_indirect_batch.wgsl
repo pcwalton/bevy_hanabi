@@ -11,11 +11,9 @@
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let thread_index = global_invocation_id.x;
-
     if (thread_index >= arrayLength(&effect_metadata)) {
         return;
     }
-
     if (thread_index >= batch_metadata.total_batch_count) {
         return;
     }

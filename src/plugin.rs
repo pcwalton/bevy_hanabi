@@ -344,6 +344,7 @@ impl Plugin for HanabiPlugin {
             indirect_shader_events,
             indirect_batch_shader,
             render_batch_shader,
+            sort_indirect_batch_shader,
             sort_fill_shader,
             sort_shader,
             sort_copy_shader,
@@ -357,6 +358,17 @@ impl Plugin for HanabiPlugin {
             let effect_sort_metadata_padding_code =
                 GpuEffectSortMetadata::padding_code(min_storage_buffer_offset_alignment);
 
+            let sort_indirect_batch_shader = Shader::from_wgsl(
+                include_str!("render/vfx_sort_indirect_batch.wgsl").replace(
+                    "{{EFFECT_SORT_METADATA_PADDING}}",
+                    &effect_sort_metadata_padding_code,
+                ),
+                std::path::Path::new(file!())
+                    .parent()
+                    .unwrap()
+                    .join("render/vfx_sort_fill.wgsl")
+                    .to_string_lossy(),
+            );
             let sort_fill_shader = Shader::from_wgsl(
                 include_str!("render/vfx_sort_fill.wgsl").replace(
                     "{{EFFECT_SORT_METADATA_PADDING}}",
@@ -390,6 +402,7 @@ impl Plugin for HanabiPlugin {
             let indirect_shader_events = assets.add(indirect_shader_events);
             let indirect_batch_shader = assets.add(indirect_batch_shader);
             let render_batch_shader = assets.add(render_batch_shader);
+            let sort_indirect_batch_shader = assets.add(sort_indirect_batch_shader);
             let sort_fill_shader = assets.add(sort_fill_shader);
             let sort_shader = assets.add(sort_shader);
             let sort_copy_shader = assets.add(sort_copy_shader);
@@ -399,6 +412,7 @@ impl Plugin for HanabiPlugin {
                 indirect_shader_events,
                 indirect_batch_shader,
                 render_batch_shader,
+                sort_indirect_batch_shader,
                 sort_fill_shader,
                 sort_shader,
                 sort_copy_shader,
@@ -420,6 +434,7 @@ impl Plugin for HanabiPlugin {
         let render_app = app.sub_app_mut(RenderApp);
         let sort_bind_groups = SortBindGroups::new(
             render_app.world_mut(),
+            sort_indirect_batch_shader,
             sort_fill_shader,
             sort_shader,
             sort_copy_shader,
