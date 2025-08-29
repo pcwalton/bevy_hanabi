@@ -12,7 +12,11 @@
     clippy::suspicious_operation_groupings,
     clippy::useless_let_if_seq
 )]
-#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::uninlined_format_args
+)]
 
 //! 🎆 Hanabi -- a GPU particle system plugin for the Bevy game engine.
 //!

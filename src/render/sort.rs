@@ -10,8 +10,7 @@ use bevy::{
     render::{
         render_resource::{
             BindGroup, BindGroupLayout, Buffer, BufferId, CachedComputePipelineId,
-            ComputePipelineDescriptor, GpuArrayBuffer, PipelineCache, RawBufferVec, Shader,
-            ShaderType,
+            ComputePipelineDescriptor, PipelineCache, RawBufferVec, Shader, ShaderType,
         },
         renderer::{RenderDevice, RenderQueue},
     },
@@ -20,15 +19,12 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 use wgpu::{
     BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType, BufferBinding,
-    BufferBindingType, BufferDescriptor, BufferUsages, CommandEncoder, ShaderStages,
+    BufferBindingType, BufferUsages, ShaderStages,
 };
 
-use super::{gpu_buffer::GpuBuffer, GpuDispatchIndirect, GpuEffectMetadata, StorageType};
+use super::{GpuEffectMetadata, StorageType};
 use crate::{
-    render::{
-        aligned_buffer_vec::AlignedBufferVec, GpuEffectSortMetadata, GpuLimits,
-        GpuRenderBatchDescriptor, GpuRenderBatchMetadata,
-    },
+    render::{GpuEffectSortMetadata, GpuRenderBatchDescriptor, GpuRenderBatchMetadata},
     Attribute, ParticleLayout,
 };
 
@@ -71,11 +67,6 @@ struct SortCopyBindGroupKey {
     indirect_index: BufferId,
     sort: BufferId,
     effect_metadata: BufferId,
-    effect_sort_metadata: BufferId,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct SortBindGroupKey {
     effect_sort_metadata: BufferId,
 }
 
@@ -137,17 +128,6 @@ impl SortBindGroups {
 
         let sort_buffer = RawBufferVec::new(BufferUsages::STORAGE);
 
-        let indirect_buffer_size = 3 * 1024;
-        let indirect_buffer = render_device.create_buffer(&BufferDescriptor {
-            label: Some("hanabi:buffer:sort:indirect"),
-            size: indirect_buffer_size,
-            usage: BufferUsages::COPY_SRC
-                | BufferUsages::COPY_DST
-                | BufferUsages::STORAGE
-                | BufferUsages::INDIRECT,
-            mapped_at_creation: false,
-        });
-
         let sort_bind_group_layout = render_device.create_bind_group_layout(
             "hanabi:bind_group_layout:sort",
             &[
@@ -193,8 +173,6 @@ impl SortBindGroups {
             render_device.limits().min_storage_buffer_offset_alignment;
         let effect_metadata_min_binding_size =
             GpuEffectMetadata::aligned_size(min_storage_buffer_offset_alignment);
-        let effect_sort_metadata_min_binding_size =
-            GpuEffectSortMetadata::aligned_size(min_storage_buffer_offset_alignment);
         let batch_descriptor_size =
             GpuRenderBatchDescriptor::aligned_size(min_storage_buffer_offset_alignment);
 
@@ -451,7 +429,6 @@ impl SortBindGroups {
                     .render_device
                     .limits()
                     .min_storage_buffer_offset_alignment;
-                let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
                 let batch_descriptor_size =
                     GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
@@ -603,13 +580,6 @@ impl SortBindGroups {
         let bind_group = match entry {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let storage_alignment = self
-                    .render_device
-                    .limits()
-                    .min_storage_buffer_offset_alignment;
-                let render_batch_descriptor_size =
-                    GpuRenderBatchDescriptor::aligned_size(storage_alignment);
-
                 entry.insert(self.render_device.create_bind_group(
                     "hanabi:bind_group:sort_indirect_batch",
                     &self.sort_indirect_batch_bind_group_layout,
@@ -865,8 +835,6 @@ impl SortBindGroups {
                     .render_device
                     .limits()
                     .min_storage_buffer_offset_alignment;
-                let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
-                let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
                 let render_batch_descriptor_size =
                     GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 

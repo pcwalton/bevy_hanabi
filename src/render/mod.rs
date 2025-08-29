@@ -3400,7 +3400,6 @@ pub(crate) fn add_effects(
     mut property_cache: ResMut<PropertyCache>,
     mut event_cache: ResMut<EventCache>,
     mut extracted_effects: ResMut<ExtractedEffects>,
-    mut sort_bind_groups: ResMut<SortBindGroups>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("add_effects").entered();
@@ -4607,7 +4606,6 @@ pub(crate) fn batch_effects(
         &mut BatchInput,
     )>,
     sorted_effect_batches: ResMut<SortedEffectBatches>,
-    mut gpu_buffer_operations: ResMut<GpuBufferOperations>,
 ) {
     trace!("batch_effects");
 
@@ -4620,8 +4618,6 @@ pub(crate) fn batch_effects(
     // the previous start end, without gap). EffectSlice already contains both
     // information, and the proper ordering implementation.
     // effect_entity_list.sort_by_key(|a| a.effect_slice.clone());
-
-    let mut sort_queue = GpuBufferOperationQueue::new();
 
     // Sort all extracted effects.
 
@@ -4686,7 +4682,7 @@ pub(crate) fn batch_effects(
         // Spawn one EffectBatch per instance (no batching; TODO). This contains
         // most of the data needed to drive rendering. However this doesn't drive
         // rendering; this is just storage.
-        let mut effect_batch = EffectBatch::from_input(
+        let effect_batch = EffectBatch::from_input(
             cached_mesh,
             cached_effect_events,
             cached_child_info,
@@ -4707,7 +4703,7 @@ pub(crate) fn batch_effects(
         // ribbon).
         if input.layout_flags.contains(LayoutFlags::RIBBONS) {
             // This buffer is allocated in prepare_effects(), so should always be available
-            let Some(effect_metadata_buffer) = effects_meta.effect_metadata_buffer.buffer() else {
+            if effects_meta.effect_metadata_buffer.buffer().is_none() {
                 error!("Failed to find effect metadata buffer. This is a bug.");
                 continue;
             };
@@ -4719,11 +4715,6 @@ pub(crate) fn batch_effects(
             effect_batch_index,
             entity,
         );
-    }
-
-    debug_assert!(sorted_effect_batches.dispatch_queue_index.is_none());
-    if !sort_queue.operation_queue.is_empty() {
-        sorted_effect_batches.dispatch_queue_index = Some(gpu_buffer_operations.submit(sort_queue));
     }
 
     // Build the render batches.
@@ -4756,7 +4747,7 @@ pub(crate) fn batch_effects(
     effects_meta.update_dispatch_indirect_buffer.clear();
 
     // Rebuild the render batch buffers.
-    for (_, mut effect_render_batch) in &mut sorted_effect_batches.render_batches {
+    for (_, effect_render_batch) in &mut sorted_effect_batches.render_batches {
         effects_meta.total_render_batch_count += 1;
 
         let Some(cached_mesh_location) = sorted_effect_batches
@@ -5399,7 +5390,6 @@ impl EffectBindGroups {
         gpu_limits: &GpuLimits,
         render_device: &RenderDevice,
         layout: &BindGroupLayout,
-        render_batch_metadata_buffer: &Buffer,
         render_batch_descriptor_buffer: &Buffer,
         render_batch_effect_index_buffer: &Buffer,
         effect_metadata_buffer: &Buffer,
@@ -6289,7 +6279,6 @@ pub(crate) fn prepare_gpu_resources(
     //mut effect_cache: ResMut<EffectCache>,
     mut event_cache: ResMut<EventCache>,
     mut effect_bind_groups: ResMut<EffectBindGroups>,
-    mut sort_bind_groups: ResMut<SortBindGroups>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     view_uniforms: Res<ViewUniforms>,
@@ -6785,10 +6774,6 @@ pub(crate) fn prepare_bind_groups(
                     &effects_meta.gpu_limits,
                     &render_device,
                     update_metadata_layout,
-                    effects_meta
-                        .render_batch_metadata_buffer
-                        .buffer()
-                        .expect("Render batch metadata buffer must be present"),
                     effects_meta
                         .render_batch_descriptor_buffer
                         .buffer()
@@ -7410,8 +7395,6 @@ impl Node for VfxSimulateNode {
         vec![]
     }
 
-    fn update(&mut self, world: &mut World) {}
-
     fn run(
         &self,
         _graph: &mut RenderGraphContext,
@@ -7548,9 +7531,7 @@ impl Node for VfxSimulateNode {
             }
 
             // Dispatch init compute jobs for applicable render batches
-            for (render_batch_index, (render_batch_key, render_batch)) in
-                sorted_effect_batches.render_batches.iter().enumerate()
-            {
+            for (_, render_batch) in sorted_effect_batches.render_batches.iter() {
                 let Some(&representative_effect_batch_index) =
                     render_batch.effect_batch_indices.first()
                 else {
@@ -7949,8 +7930,6 @@ impl Node for VfxSimulateNode {
                 // Fill the sort buffer with the key-value pairs to sort
                 compute_pass.push_debug_group("hanabi:sort_fill");
 
-                let indirect_dispatch_index = render_batch.sort_dispatch_indirect_buffer_row_index;
-
                 // Fetch compute pipeline
                 let Some(pipeline_id) = sort_bind_groups
                     .get_sort_fill_pipeline_id(&representative_effect_batch.particle_layout)
@@ -8040,8 +8019,6 @@ impl Node for VfxSimulateNode {
                     continue;
                 };
 
-                let indirect_dispatch_index = render_batch.sort_dispatch_indirect_buffer_row_index;
-
                 // Copy the sorted particle indices back into the indirect index buffer, where
                 // the render pass will read them.
                 compute_pass.push_debug_group("hanabi:copy_sorted_indices");
@@ -8075,24 +8052,8 @@ impl Node for VfxSimulateNode {
                     warn!("Missing sort-copy bind group.");
                     continue;
                 };
-                let effect_metadata_offset = effects_meta.effect_metadata_buffer.dynamic_offset(
-                    representative_effect_batch
-                        .dispatch_buffer_indices
-                        .effect_metadata_buffer_table_id,
-                );
-                let effect_sort_metadata_offset =
-                    effects_meta.effect_sort_metadata_buffer.dynamic_offset(
-                        representative_effect_batch
-                            .dispatch_buffer_indices
-                            .effect_sort_metadata_index
-                            .expect("Sort metadata index should have been set at this point"),
-                    );
                 compute_pass.set_bind_group(0, bind_group, &[batch_descriptor_offset]);
 
-                // FIXME: HACK
-                /*let sort_dispatch_indirect_buffer_offset =
-                    render_batch.sort_dispatch_indirect_buffer_row_index as u64
-                        * u64::from(GpuDispatchIndirect::min_size());*/
                 let sort_dispatch_indirect_buffer_offset =
                     render_batch.sort_dispatch_indirect_buffer_row_index as u64
                         * u64::from(GpuDispatchIndirect::min_size());
