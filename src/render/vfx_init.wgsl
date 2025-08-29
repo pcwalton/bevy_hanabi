@@ -62,7 +62,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let effect_metadata_index = 0;
     let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
     let event_index = thread_index;
-    let global_child_index = effect_metadata.global_child_index;
+    let global_child_index = effect_metadata[effect_metadata_index].global_child_index;
     let event_count = child_info_buffer.rows[global_child_index].event_count;
     if (event_index >= u32(event_count)) {
         return;

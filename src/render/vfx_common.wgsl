@@ -68,6 +68,10 @@ struct EventBuffer {
 struct ChildInfo {
     /// Index of the effect's IndirectDispatch entry in the global init indirect dispatch array.
     init_indirect_dispatch_index: u32,
+    // Index of the first spawn event in the `spawn_events` buffer.
+    spawn_event_offset: u32,
+    // Size of the `spawn_events` buffer.
+    spawn_event_capacity: u32,
     /// Number of events in the associated event buffer.
 #ifdef CHILD_INFO_EVENT_COUNT_IS_ATOMIC
     event_count: atomic<i32>,

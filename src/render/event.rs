@@ -201,6 +201,8 @@ pub struct GpuChildInfo {
     /// [`EventCache::init_indirect_dispatch_buffer`] used to dispatch the init
     /// pass of this child effect.
     pub init_indirect_dispatch_index: u32,
+    pub spawn_event_offset: u32,
+    pub spawn_event_capacity: u32,
     /// Number of events currently stored inside the [`EventBuffer`] slice
     /// associated with this child effect. This is updated atomically by the
     /// GPU while stored in the [`EventCache::child_infos_buffer`].

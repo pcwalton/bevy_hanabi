@@ -1043,7 +1043,7 @@ fn create_metadata_init_bind_group_layout(
     if consume_gpu_spawn_events {
         // @group(3) @binding(3) var<storage, read> child_info_buffer : ChildInfoBuffer;
         entries.push(BindGroupLayoutEntry {
-            binding: 1,
+            binding: 3,
             visibility: ShaderStages::COMPUTE,
             ty: BindingType::Buffer {
                 ty: BufferBindingType::Storage { read_only: true },
@@ -1055,7 +1055,7 @@ fn create_metadata_init_bind_group_layout(
 
         // @group(3) @binding(4) var<storage, read> event_buffer : EventBuffer;
         entries.push(BindGroupLayoutEntry {
-            binding: 2,
+            binding: 4,
             visibility: ShaderStages::COMPUTE,
             ty: BindingType::Buffer {
                 ty: BufferBindingType::Storage { read_only: true },
@@ -1159,7 +1159,7 @@ fn create_metadata_update_bind_group_layout(
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(4).unwrap()),
+                    min_binding_size: None,
                 },
                 count: None,
             });
