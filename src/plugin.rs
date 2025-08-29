@@ -34,10 +34,10 @@ use crate::{
         EffectAssetEvents, EffectBindGroups, EffectCache, EffectsMeta, EventCache,
         ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuEffectSortMetadata,
         GpuRenderBatchDescriptor, GpuSpawnerParams, IndirectBatchPipeline, InitFillDispatchQueue,
-        ParticlesInitPipeline, ParticlesRenderPipeline, ParticlesUpdatePipeline,
-        PropertyBindGroups, PropertyCache, RenderBatchPipeline, RenderDebugSettings, ShaderCache,
-        SimParams, SortBindGroups, SortedEffectBatches, StorageType as _, UtilsPipeline,
-        VfxSimulateDriverNode, VfxSimulateNode,
+        InitIndirectBatchPipeline, ParticlesInitPipeline, ParticlesRenderPipeline,
+        ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache, RenderBatchPipeline,
+        RenderDebugSettings, ShaderCache, SimParams, SortBindGroups, SortedEffectBatches,
+        StorageType as _, UtilsPipeline, VfxSimulateDriverNode, VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -344,6 +344,7 @@ impl Plugin for HanabiPlugin {
             indirect_shader_events,
             indirect_batch_shader,
             render_batch_shader,
+            init_indirect_batch_shader,
             sort_indirect_batch_shader,
             sort_fill_shader,
             sort_shader,
@@ -358,6 +359,14 @@ impl Plugin for HanabiPlugin {
             let effect_sort_metadata_padding_code =
                 GpuEffectSortMetadata::padding_code(min_storage_buffer_offset_alignment);
 
+            let init_indirect_batch_shader = Shader::from_wgsl(
+                include_str!("render/vfx_init_indirect_batch.wgsl"),
+                std::path::Path::new(file!())
+                    .parent()
+                    .unwrap()
+                    .join("render/vfx_init_indirect_batch.wgsl")
+                    .to_string_lossy(),
+            );
             let sort_indirect_batch_shader = Shader::from_wgsl(
                 include_str!("render/vfx_sort_indirect_batch.wgsl").replace(
                     "{{EFFECT_SORT_METADATA_PADDING}}",
@@ -402,6 +411,7 @@ impl Plugin for HanabiPlugin {
             let indirect_shader_events = assets.add(indirect_shader_events);
             let indirect_batch_shader = assets.add(indirect_batch_shader);
             let render_batch_shader = assets.add(render_batch_shader);
+            let init_indirect_batch_shader = assets.add(init_indirect_batch_shader);
             let sort_indirect_batch_shader = assets.add(sort_indirect_batch_shader);
             let sort_fill_shader = assets.add(sort_fill_shader);
             let sort_shader = assets.add(sort_shader);
@@ -412,6 +422,7 @@ impl Plugin for HanabiPlugin {
                 indirect_shader_events,
                 indirect_batch_shader,
                 render_batch_shader,
+                init_indirect_batch_shader,
                 sort_indirect_batch_shader,
                 sort_fill_shader,
                 sort_shader,
@@ -423,6 +434,7 @@ impl Plugin for HanabiPlugin {
             render_device.clone(),
             indirect_shader_noevent,
             indirect_shader_events,
+            init_indirect_batch_shader,
             indirect_batch_shader,
             render_batch_shader,
         );
@@ -455,6 +467,8 @@ impl Plugin for HanabiPlugin {
             .init_resource::<GpuBufferOperations>()
             .init_resource::<DispatchIndirectPipeline>()
             .init_resource::<SpecializedComputePipelines<DispatchIndirectPipeline>>()
+            .init_resource::<InitIndirectBatchPipeline>()
+            .init_resource::<SpecializedComputePipelines<InitIndirectBatchPipeline>>()
             .init_resource::<IndirectBatchPipeline>()
             .init_resource::<SpecializedComputePipelines<IndirectBatchPipeline>>()
             .init_resource::<RenderBatchPipeline>()
