@@ -38,9 +38,9 @@ pub(crate) enum BatchSpawnInfo {
     },
 }
 
-/// Batch of effects dispatched and rendered together.
+/// Internal information about a single instance of an effect.
 #[derive(Debug, Clone)]
-pub(crate) struct EffectBatch {
+pub(crate) struct EffectInstance {
     /// Handle of the underlying effect asset describing the effect.
     pub handle: Handle<EffectAsset>,
     /// Index of the [`EffectBuffer`].
@@ -96,79 +96,85 @@ pub(crate) struct EffectBatch {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct EffectBatchIndex(pub u32);
+pub(crate) struct EffectInstanceIndex(pub u32);
 
 #[derive(Debug, Default, Resource)]
-pub(crate) struct SortedEffectBatches {
-    /// Effect batches in the order they were inserted by [`push()`], indexed by
-    /// the returned [`EffectBatchIndex`].
+pub(crate) struct SortedEffects {
+    /// Effect instances in the order they were inserted by [`push()`], indexed
+    /// by the returned [`EffectBatchIndex`].
     ///
     /// [`push()`]: Self::push
-    pub(super) batches: Vec<EffectBatch>,
+    pub(super) instances: Vec<EffectInstance>,
     /// Index of the dispatch queue used for indirect fill dispatch and
     /// submitted to [`GpuBufferOperations`].
     pub(super) dispatch_queue_index: Option<u32>,
-    pub(super) render_batches: IndexMap<RenderBatchKey, RenderBatch>,
+    /// Effect batches in the order they were inserted.
+    pub(super) batches: IndexMap<EffectBatchKey, EffectBatch>,
 }
 
+/// Identifies effect batches.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct RenderBatchKey {
+pub(crate) struct EffectBatchKey {
     asset_id: AssetId<EffectAsset>,
     buffer_index: u32,
 }
 
+/// Information about a single batched set of effects.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct RenderBatch {
-    pub(super) effect_batch_indices: Vec<EffectBatchIndex>,
+pub(crate) struct EffectBatch {
+    /// Indices of the effects in this batch.
+    pub(super) effect_instance_indices: Vec<EffectInstanceIndex>,
+    /// Index of the GPU batch descriptor.
     pub(super) batch_descriptor_index: u32,
+    /// The index of the [`GpuDispatchIndirect`] row in the GPU buffer
+    /// init dispatch indirect buffer, if this effect batch has a GPU spawner.
     pub(super) init_dispatch_indirect_buffer_row_index: Option<u32>,
     /// The index of the [`GpuDispatchIndirect`] row in the GPU buffer
     /// [`EffectsMeta::update_dispatch_indirect_buffer`].
     ///
     /// [`EffectsMeta::update_dispatch_indirect_buffer`]: super::EffectsMeta::update_dispatch_indirect_buffer
     pub(crate) update_dispatch_indirect_buffer_row_index: u32,
+    /// The index of the [`GpuDispatchIndirect`] row in the GPU buffer
+    /// [`EffectsMeta::sort_dispatch_indirect_buffer`].
+    ///
+    /// [`EffectsMeta::sort_dispatch_indirect_buffer`]: super::EffectsMeta::sort_dispatch_indirect_buffer
     pub(crate) sort_dispatch_indirect_buffer_row_index: u32,
 }
 
-impl SortedEffectBatches {
+impl SortedEffects {
     pub fn clear(&mut self) {
-        self.batches.clear();
+        self.instances.clear();
         self.dispatch_queue_index = None;
+        self.batches.clear();
     }
 
-    pub fn push(&mut self, effect_batch: EffectBatch) -> EffectBatchIndex {
-        let index = self.batches.len() as u32;
-        self.batches.push(effect_batch);
-        EffectBatchIndex(index)
+    pub fn push(&mut self, effect_instance: EffectInstance) -> EffectInstanceIndex {
+        let index = self.instances.len() as u32;
+        self.instances.push(effect_instance);
+        EffectInstanceIndex(index)
     }
 
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
-        self.batches.len()
+        self.instances.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.batches.is_empty()
+        self.instances.is_empty()
     }
 
-    /// Get an iterator over the sorted sequence of effect batches.
-    #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = &EffectBatch> {
-        self.batches.iter()
-    }
-
-    pub fn get(&self, index: EffectBatchIndex) -> Option<&EffectBatch> {
-        if index.0 < self.batches.len() as u32 {
-            Some(&self.batches[index.0 as usize])
+    pub fn get(&self, index: EffectInstanceIndex) -> Option<&EffectInstance> {
+        if index.0 < self.instances.len() as u32 {
+            Some(&self.instances[index.0 as usize])
         } else {
             None
         }
     }
 }
 
-impl RenderBatchKey {
-    pub(crate) fn new(asset_id: AssetId<EffectAsset>, buffer_index: u32) -> RenderBatchKey {
-        RenderBatchKey {
+impl EffectBatchKey {
+    pub(crate) fn new(asset_id: AssetId<EffectAsset>, buffer_index: u32) -> EffectBatchKey {
+        EffectBatchKey {
             asset_id,
             buffer_index,
         }
@@ -309,8 +315,11 @@ impl EffectSorter {
 /// all the groups of the effect.
 #[derive(Debug, Component)]
 pub(crate) struct EffectDrawBatch {
+    /// Indices of the indirect draw commands in the indirect draw command
+    /// buffer.
     pub indirect_draw_command_range: Range<u32>,
-    pub representative_effect_batch_index: EffectBatchIndex,
+    /// The first effect instance in the batch.
+    pub representative_effect_instance_index: EffectInstanceIndex,
     /// Position of the emitter so we can compute distance to camera.
     pub representative_translation: Vec3,
     /// The main-world entity that contains this effect.
@@ -319,7 +328,7 @@ pub(crate) struct EffectDrawBatch {
     pub render_batch_descriptor_index: u32,
 }
 
-impl EffectBatch {
+impl EffectInstance {
     /// Create a new batch from a single input.
     pub fn from_input(
         cached_mesh: &CachedMesh,
@@ -330,7 +339,7 @@ impl EffectBatch {
         dispatch_buffer_indices: DispatchBufferIndices,
         property_key: Option<PropertyBindGroupKey>,
         main_entity: MainEntity,
-    ) -> EffectBatch {
+    ) -> EffectInstance {
         let spawn_info = if let Some(event_buffer_index) = input.event_buffer_index {
             BatchSpawnInfo::GpuSpawner { event_buffer_index }
         } else {
@@ -339,7 +348,7 @@ impl EffectBatch {
             }
         };
 
-        EffectBatch {
+        EffectInstance {
             handle: input.handle.clone(),
             buffer_index: input.effect_slice.buffer_index,
             slice: input.effect_slice.slice.clone(),

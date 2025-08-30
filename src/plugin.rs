@@ -36,7 +36,7 @@ use crate::{
         IndirectBatchPipeline, InitIndirectBatchPipeline, ParticlesInitPipeline,
         ParticlesRenderPipeline, ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache,
         RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams, SortBindGroups,
-        SortedEffectBatches, StorageType as _, VfxSimulateDriverNode, VfxSimulateNode,
+        SortedEffects, StorageType as _, VfxSimulateDriverNode, VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -479,7 +479,7 @@ impl Plugin for HanabiPlugin {
             .init_resource::<ExtractedEffects>()
             .init_resource::<EffectAssetEvents>()
             .init_resource::<SimParams>()
-            .init_resource::<SortedEffectBatches>()
+            .init_resource::<SortedEffects>()
             .configure_sets(
                 Render,
                 (
