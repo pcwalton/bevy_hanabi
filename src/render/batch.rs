@@ -29,11 +29,6 @@ pub(crate) enum BatchSpawnInfo {
     /// Spawn a number of particles calculated on GPU from "spawn events", which
     /// generally emitted by another effect.
     GpuSpawner {
-        /// Index into the init indirect dispatch buffer of the
-        /// [`GpuDispatchIndirect`] instance for this batch.
-        ///
-        /// [`GpuDispatchIndirect`]: super::GpuDispatchIndirect
-        init_indirect_dispatch_index: u32,
         /// Index of the [`EventBuffer`] where the GPU spawn events consumed by
         /// this batch are stored.
         ///
@@ -130,6 +125,7 @@ pub(crate) struct RenderBatchKey {
 pub(crate) struct RenderBatch {
     pub(super) effect_batch_indices: Vec<EffectBatchIndex>,
     pub(super) batch_descriptor_index: u32,
+    pub(super) init_dispatch_indirect_buffer_row_index: Option<u32>,
     /// The index of the [`GpuDispatchIndirect`] row in the GPU buffer
     /// [`EffectsMeta::update_dispatch_indirect_buffer`].
     ///
@@ -341,16 +337,9 @@ impl EffectBatch {
         main_entity: MainEntity,
     ) -> EffectBatch {
         assert_eq!(property_key.is_some(), property_offset.is_some());
-        assert_eq!(
-            input.event_buffer_index.is_some(),
-            input.init_indirect_dispatch_index.is_some()
-        );
 
         let spawn_info = if let Some(event_buffer_index) = input.event_buffer_index {
-            BatchSpawnInfo::GpuSpawner {
-                init_indirect_dispatch_index: input.init_indirect_dispatch_index.unwrap(),
-                event_buffer_index,
-            }
+            BatchSpawnInfo::GpuSpawner { event_buffer_index }
         } else {
             BatchSpawnInfo::CpuSpawner {
                 total_spawn_count: input.spawn_count,
@@ -425,9 +414,6 @@ pub(crate) struct BatchInput {
     pub spawn_count: u32,
     /// Emitter position.
     pub position: Vec3,
-    /// Index of the init indirect dispatch struct, if any.
-    // FIXME - Contains a single effect's data; should handle multiple ones.
-    pub init_indirect_dispatch_index: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

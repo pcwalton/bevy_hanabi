@@ -4,10 +4,13 @@ use bevy::{
     log::trace,
     prelude::{Component, Entity, ResMut, Resource},
     render::{
-        render_resource::{BindGroup, BindGroupLayout, Buffer, ShaderSize as _, ShaderType},
+        render_resource::{
+            BindGroup, BindGroupLayout, Buffer, RawBufferVec, ShaderSize as _, ShaderType,
+        },
         renderer::{RenderDevice, RenderQueue},
         sync_world::MainEntity,
     },
+    utils::default,
 };
 use bytemuck::{Pod, Zeroable};
 use thiserror::Error;
@@ -17,12 +20,12 @@ use wgpu::util::BufferInitDescriptor;
 use wgpu::BufferDescriptor;
 use wgpu::{
     BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType, BufferBinding,
-    BufferBindingType, BufferUsages, CommandEncoder, ShaderStages,
+    BufferBindingType, BufferUsages, ShaderStages,
 };
 
 use super::{
-    aligned_buffer_vec::HybridAlignedBufferVec, effect_cache::BufferState, gpu_buffer::GpuBuffer,
-    BufferBindingSource, EffectBindGroups, GpuDispatchIndirect,
+    aligned_buffer_vec::HybridAlignedBufferVec, effect_cache::BufferState, BufferBindingSource,
+    EffectBindGroups, GpuDispatchIndirect,
 };
 use crate::ParticleLayout;
 
@@ -187,9 +190,9 @@ pub(crate) struct CachedChildInfo {
     /// [`EventCache::child_infos_buffer`] array. This is a unique index across
     /// all effects.
     pub global_child_index: u32,
-    /// Index of the [`GpuDispatchIndirect`] entry into the
-    /// [`EventCache::init_indirect_dispatch_buffer`] array.
-    pub init_indirect_dispatch_index: u32,
+    // Index of the [`GpuDispatchIndirect`] entry into the
+    // [`EventCache::init_indirect_dispatch_buffer`] array.
+    //pub init_indirect_dispatch_index: u32,
 }
 
 /// GPU representation of the child info data structure storing some data for a
@@ -197,10 +200,6 @@ pub(crate) struct CachedChildInfo {
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
 pub struct GpuChildInfo {
-    /// Index of the [`GpuDispatchIndirect`] inside the
-    /// [`EventCache::init_indirect_dispatch_buffer`] used to dispatch the init
-    /// pass of this child effect.
-    pub init_indirect_dispatch_index: u32,
     /// Number of events currently stored inside the [`EventBuffer`] slice
     /// associated with this child effect. This is updated atomically by the
     /// GPU while stored in the [`EventCache::child_infos_buffer`].
@@ -220,9 +219,6 @@ pub struct CachedEffectEvents {
     /// effect. The number of used events is stored on the GPU in
     /// [`GpuChildInfo::event_count`].
     pub range: Range<u32>,
-    /// Index of the [`GpuDispatchIndirect`] inside the
-    /// [`EventCache::init_indirect_dispatch_buffer`].
-    pub init_indirect_dispatch_index: u32,
 }
 
 impl CachedEffectEvents {
@@ -263,10 +259,7 @@ pub struct EventCache {
     /// structs for all the indirect init passes. Any effect allocating storage
     /// for GPU events also get an entry into this buffer, to allow consuming
     /// the events from an init pass indirectly dispatched (GPU-driven).
-    // FIXME - merge with the update pass one, we don't need 2 buffers storing the same type; on
-    // the other hand if we sync the allocations with GpuChildInfo we can guarantee a perfect
-    // batching for the init fill dispatch pass (single dispatch for all instances at once).
-    init_indirect_dispatch_buffer: GpuBuffer<GpuDispatchIndirect>,
+    init_indirect_dispatch_buffer: RawBufferVec<GpuDispatchIndirect>,
     /// Bind group layout for the indirect dispatch pass, which clears the GPU
     /// event counts ([`GpuChildInfo::event_count`]).
     indirect_child_info_buffer_bind_group_layout: BindGroupLayout,
@@ -278,10 +271,8 @@ pub struct EventCache {
 impl EventCache {
     /// Create a new event cache.
     pub fn new(device: RenderDevice) -> Self {
-        let init_indirect_dispatch_buffer = GpuBuffer::new(
-            BufferUsages::STORAGE | BufferUsages::INDIRECT,
-            Some("hanabi:buffer:init_indirect_dispatch".to_string()),
-        );
+        let init_indirect_dispatch_buffer =
+            RawBufferVec::new(BufferUsages::STORAGE | BufferUsages::INDIRECT);
 
         let child_infos_bind_group_layout = device.create_bind_group_layout(
             "hanabi:bind_group_layout:indirect:child_infos@3",
@@ -351,10 +342,6 @@ impl EventCache {
     pub fn allocate(&mut self, num_events: u32) -> CachedEffectEvents {
         assert!(num_events > 0);
 
-        // Allocate an entry into the indirect dispatch buffer
-        // The value pushed is a dummy; see allocate_frame_buffers().
-        let init_indirect_dispatch_index = self.init_indirect_dispatch_buffer.allocate();
-
         // Try to find an allocated GPU buffer with enough capacity
         let mut empty_index = None;
         for (buffer_index, buffer) in self.buffers.iter_mut().enumerate() {
@@ -371,7 +358,6 @@ impl EventCache {
                 trace!("Allocate new slice in event buffer #{buffer_index} for {num_events} events: range={event_slice:?}");
                 return CachedEffectEvents {
                     buffer_index: buffer_index as u32,
-                    init_indirect_dispatch_index,
                     range: event_slice.slice,
                 };
             }
@@ -424,9 +410,12 @@ impl EventCache {
 
         CachedEffectEvents {
             buffer_index: buffer_index as u32,
-            init_indirect_dispatch_index,
             range: event_slice.slice,
         }
+    }
+
+    pub fn allocate_indirect_dispatch_entry(&mut self) -> u32 {
+        self.init_indirect_dispatch_buffer.push(default()) as u32
     }
 
     /// Deallocated and remove an event block allocation from the cache.
@@ -438,9 +427,6 @@ impl EventCache {
             "Removing cached event {:?} from cache.",
             cached_effect_events
         );
-
-        self.init_indirect_dispatch_buffer
-            .free(cached_effect_events.init_indirect_dispatch_index);
 
         let entry = self
             .buffers
@@ -528,12 +514,6 @@ impl EventCache {
         // FIXME
         _effect_bind_groups: &mut ResMut<EffectBindGroups>,
     ) {
-        // This buffer is only ever used in the bind groups of a `GpuBufferOperations`,
-        // which manages its bind groups automatically each frame. So there's no
-        // invalidation to do here on re-allocation.
-        self.init_indirect_dispatch_buffer
-            .prepare_buffers(render_device);
-
         self.child_infos_buffer
             .write_buffer(render_device, render_queue);
     }
@@ -544,23 +524,17 @@ impl EventCache {
     /// This must be called once per frame after the buffers have been
     /// reallocated with `prepare_buffers()`.
     #[inline]
-    pub fn write_buffers(&self, command_encoder: &mut CommandEncoder) {
+    pub fn write_buffers(&mut self, render_device: &RenderDevice, render_queue: &RenderQueue) {
+        if self.init_indirect_dispatch_buffer.is_empty() {
+            self.init_indirect_dispatch_buffer.push(default());
+        }
         self.init_indirect_dispatch_buffer
-            .write_buffers(command_encoder);
+            .write_buffer(render_device, render_queue);
     }
 
-    /// Destroy old copies of buffers reallocated last frame and copied to a new
-    /// buffer.
-    ///
-    /// This must be called once per frame after any content was effectively
-    /// copied from an old to a new buffer. This means that, due to Bevy's
-    /// limitations, this must be called on the next frame, as we don't have
-    /// write access to anything nor any hint as to when copies are done until
-    /// the next frame rendering actually starts.
     #[inline]
-    pub fn clear_previous_frame_resizes(&mut self) {
-        self.init_indirect_dispatch_buffer
-            .clear_previous_frame_resizes();
+    pub fn clear_indirect_dispatch_buffer(&mut self) {
+        self.init_indirect_dispatch_buffer.clear();
     }
 
     #[inline]

@@ -59,15 +59,28 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // Cap to the actual number of spawning requested by CPU or GPU, since compute shaders run
     // in workgroup_size(64) so more threads than needed are launched (rounded up to 64).
 #ifdef CONSUME_GPU_SPAWN_EVENTS
-    let effect_metadata_index = 0;
-    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
-    let event_index = thread_index;
-    let global_child_index = effect_metadata[effect_metadata_index].global_child_index;
-    let event_count = child_info_buffer.rows[global_child_index].event_count;
-    if (event_index >= u32(event_count)) {
+    // Step through render batch descriptors. Cap to the actual amount of
+    // spawning requested by GPU.
+    // TODO: This should be a prefix sum and binary search or something instead
+    // of linear search.
+    var effect_metadata_index = 0u;
+    var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
+    var event_index = thread_index;
+    while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
+        effect_metadata_index = batch_effect_indices[effect_index_offset];
+        let global_child_index = effect_metadata[effect_metadata_index].global_child_index;
+        let this_event_count = u32(child_info_buffer.rows[global_child_index].event_count);
+        if (event_index < this_event_count) {
+            break;
+        }
+        event_index -= this_event_count;
+        effect_index_offset += 1u;
+    }
+    if (effect_index_offset == batch_descriptor.last_batch_effect_index_offset) {
         return;
     }
-    let indirect_particle_index = thread_index;
+    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
+    let indirect_particle_index = event_index;
 #else
     // Step through render batch descriptors. Cap to the actual amount of
     // spawning requested by CPU.

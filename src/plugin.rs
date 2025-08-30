@@ -29,15 +29,15 @@ use crate::{
         add_effects, batch_effects, clear_transient_batch_inputs, extract_effect_events,
         extract_effects, fixup_parents, on_remove_cached_effect, on_remove_cached_properties,
         prepare_bind_groups, prepare_effects, prepare_gpu_resources, prepare_late_gpu_resources,
-        prepare_property_buffers, queue_effects, queue_init_fill_dispatch_ops, resolve_parents,
-        update_mesh_locations, DebugSettings, DispatchIndirectPipeline, DrawEffects,
-        EffectAssetEvents, EffectBindGroups, EffectCache, EffectsMeta, EventCache,
-        ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuEffectSortMetadata,
-        GpuRenderBatchDescriptor, GpuSpawnerParams, IndirectBatchPipeline, InitFillDispatchQueue,
-        InitIndirectBatchPipeline, ParticlesInitPipeline, ParticlesRenderPipeline,
-        ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache, RenderBatchPipeline,
-        RenderDebugSettings, ShaderCache, SimParams, SortBindGroups, SortedEffectBatches,
-        StorageType as _, UtilsPipeline, VfxSimulateDriverNode, VfxSimulateNode,
+        prepare_property_buffers, queue_effects, resolve_parents, update_mesh_locations,
+        DebugSettings, DispatchIndirectPipeline, DrawEffects, EffectAssetEvents, EffectBindGroups,
+        EffectCache, EffectsMeta, EventCache, ExtractedEffects, GpuBufferOperations,
+        GpuEffectMetadata, GpuEffectSortMetadata, GpuRenderBatchDescriptor, GpuSpawnerParams,
+        IndirectBatchPipeline, InitIndirectBatchPipeline, ParticlesInitPipeline,
+        ParticlesRenderPipeline, ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache,
+        RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams, SortBindGroups,
+        SortedEffectBatches, StorageType as _, UtilsPipeline, VfxSimulateDriverNode,
+        VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -461,7 +461,6 @@ impl Plugin for HanabiPlugin {
             .init_resource::<RenderDebugSettings>()
             .init_resource::<EffectBindGroups>()
             .init_resource::<PropertyBindGroups>()
-            .init_resource::<InitFillDispatchQueue>()
             .insert_resource(sort_bind_groups)
             .init_resource::<UtilsPipeline>()
             .init_resource::<GpuBufferOperations>()
@@ -522,10 +521,6 @@ impl Plugin for HanabiPlugin {
                     prepare_property_buffers
                         .in_set(EffectSystems::PrepareEffectGpuResources)
                         .after(add_effects)
-                        .before(prepare_bind_groups),
-                    queue_init_fill_dispatch_ops
-                        .in_set(EffectSystems::PrepareEffectGpuResources)
-                        .after(prepare_gpu_resources)
                         .before(prepare_bind_groups),
                     prepare_bind_groups
                         .in_set(EffectSystems::PrepareBindGroups)

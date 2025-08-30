@@ -31,10 +31,11 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
             batch_effect_index_offset += 1u) {
         effect_metadata_index = batch_effect_indices[batch_effect_index_offset];
         child_info_index = effect_metadata[effect_metadata_index].global_child_index;
-        total_event_count += child_info[child_info_index].event_count;
+        total_event_count += u32(child_info.rows[child_info_index].event_count);
     }
 
-    let init_indirect_dispatch_index = child_info[child_info_index].init_indirect_dispatch_index;
+    let init_indirect_dispatch_index =
+        batch_descriptors[batch_descriptor_index].init_indirect_dispatch_index;
 
     init_indirect_dispatch[init_indirect_dispatch_index].x = (total_event_count + 63u) >> 6u;
     init_indirect_dispatch[init_indirect_dispatch_index].y = 1;

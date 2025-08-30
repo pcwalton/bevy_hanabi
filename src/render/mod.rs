@@ -422,10 +422,6 @@ pub struct GpuEffectMetadata {
     /// Index of the [`GpuRenderIndirect`] struct inside the global
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     pub indirect_render_index: u32,
-    /// Offset (in u32 count) of the init indirect dispatch struct inside its
-    /// buffer. This avoids having to align those 16-byte structs to the GPU
-    /// alignment (at least 32 bytes, even 256 bytes on some).
-    pub init_indirect_dispatch_index: u32,
     pub sort_metadata_index: u32,
     /// Index of this effect into its parent's ChildInfo array
     /// ([`EffectChildren::effect_cache_ids`] and its associated GPU
@@ -472,6 +468,7 @@ pub(crate) struct GpuRenderBatchDescriptor {
     first_batch_effect_index_offset: u32,
     last_batch_effect_index_offset: u32,
     indirect_draw_command_offset: u32,
+    init_indirect_dispatch_index: u32,
     /// 1 if the mesh is indexed or 0 if it isn't.
     mesh_is_indexed: u32,
 }
@@ -511,143 +508,6 @@ pub(super) struct InitFillDispatchItem {
     /// Index of the [`GpuDispatchIndirect`] entry to write the workgroup count
     /// to.
     pub dispatch_indirect_index: u32,
-}
-
-/// Queue of fill dispatch operations for the init indirect pass.
-///
-/// The queue stores the init fill dispatch operations for the current frame,
-/// without the reference to the source and destination buffers, which may be
-/// reallocated later in the frame. This allows enqueuing operations during the
-/// prepare rendering phase, while deferring GPU buffer (re-)allocation to a
-/// later stage.
-#[derive(Debug, Default, Resource)]
-pub(super) struct InitFillDispatchQueue {
-    queue: Vec<InitFillDispatchItem>,
-    submitted_queue_index: Option<u32>,
-}
-
-impl InitFillDispatchQueue {
-    /// Clear the queue.
-    #[inline]
-    pub fn clear(&mut self) {
-        self.queue.clear();
-        self.submitted_queue_index = None;
-    }
-
-    /// Check if the queue is empty.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
-
-    /// Enqueue a new operation.
-    #[inline]
-    pub fn enqueue(&mut self, global_child_index: u32, dispatch_indirect_index: u32) {
-        self.queue.push(InitFillDispatchItem {
-            global_child_index,
-            dispatch_indirect_index,
-        });
-    }
-
-    /// Submit pending operations for this frame.
-    pub fn submit(
-        &mut self,
-        src_buffer: &Buffer,
-        dst_buffer: &Buffer,
-        gpu_buffer_operations: &mut GpuBufferOperations,
-    ) {
-        if self.queue.is_empty() {
-            return;
-        }
-
-        // Sort by source. We can only batch if the destination is also contiguous, so
-        // we can check with a linear walk if the source is already sorted.
-        self.queue
-            .sort_unstable_by_key(|item| item.global_child_index);
-
-        let mut fill_queue = GpuBufferOperationQueue::new();
-
-        // Batch and schedule all init indirect dispatch operations
-        let mut src_start = self.queue[0].global_child_index;
-        let mut dst_start = self.queue[0].dispatch_indirect_index;
-        let mut src_end = src_start + 1;
-        let mut dst_end = dst_start + 1;
-        let src_stride = GpuChildInfo::min_size().get() as u32 / 4;
-        let dst_stride = GpuDispatchIndirect::SHADER_SIZE.get() as u32 / 4;
-        for i in 1..self.queue.len() {
-            let InitFillDispatchItem {
-                global_child_index: src,
-                dispatch_indirect_index: dst,
-            } = self.queue[i];
-            if src != src_end || dst != dst_end {
-                let count = src_end - src_start;
-                debug_assert_eq!(count, dst_end - dst_start);
-                let args = GpuBufferOperationArgs {
-                    src_offset: src_start * src_stride + 1,
-                    src_stride,
-                    dst_offset: dst_start * dst_stride,
-                    dst_stride,
-                    count,
-                };
-                trace!(
-                "enqueue_init_fill(): src:global_child_index={} dst:init_indirect_dispatch_index={} args={:?} src_buffer={:?} dst_buffer={:?}",
-                src_start,
-                dst_start,
-                args,
-                src_buffer.id(),
-                dst_buffer.id(),
-            );
-                fill_queue.enqueue(
-                    GpuBufferOperationType::FillDispatchArgs,
-                    args,
-                    src_buffer.clone(),
-                    0,
-                    None,
-                    dst_buffer.clone(),
-                    0,
-                    None,
-                );
-                src_start = src;
-                dst_start = dst;
-            }
-            src_end = src + 1;
-            dst_end = dst + 1;
-        }
-        if src_start != src_end || dst_start != dst_end {
-            let count = src_end - src_start;
-            debug_assert_eq!(count, dst_end - dst_start);
-            let args = GpuBufferOperationArgs {
-                src_offset: src_start * src_stride + 1,
-                src_stride,
-                dst_offset: dst_start * dst_stride,
-                dst_stride,
-                count,
-            };
-            trace!(
-            "IFDA::submit(): src:global_child_index={} dst:init_indirect_dispatch_index={} args={:?} src_buffer={:?} dst_buffer={:?}",
-            src_start,
-            dst_start,
-            args,
-            src_buffer.id(),
-            dst_buffer.id(),
-        );
-            fill_queue.enqueue(
-                GpuBufferOperationType::FillDispatchArgs,
-                args,
-                src_buffer.clone(),
-                0,
-                None,
-                dst_buffer.clone(),
-                0,
-                None,
-            );
-        }
-
-        debug_assert!(self.submitted_queue_index.is_none());
-        if !fill_queue.operation_queue.is_empty() {
-            self.submitted_queue_index = Some(gpu_buffer_operations.submit(fill_queue));
-        }
-    }
 }
 
 /// Compute pipeline to run the `vfx_indirect` dispatch workgroup calculation
@@ -3571,7 +3431,6 @@ pub(crate) fn add_effects(
     effects_meta
         .effect_sort_metadata_buffer
         .clear_previous_frame_resizes();
-    event_cache.clear_previous_frame_resizes();
 
     // Allocate new effects
     effects_meta.add_effects(
@@ -3742,7 +3601,6 @@ pub(crate) fn resolve_parents(
         child_vec.push((child_entity, child_buffer_binding_source));
         child_infos.push(GpuChildInfo {
             event_count: 0,
-            init_indirect_dispatch_index: cached_effect_events.init_indirect_dispatch_index,
             spawn_event_offset: cached_effect_events.range.start,
             spawn_event_capacity: cached_effect_events.range.end - cached_effect_events.range.start,
         });
@@ -3756,8 +3614,6 @@ pub(crate) fn resolve_parents(
                     == old_cached_child_info.parent_buffer_binding_source
                 // Note: if local child index didn't change, then keep global one too for now. Chances are the parent didn't change, but anyway we can't know for now without inspecting all its children.
                 && local_child_index == old_cached_child_info.local_child_index
-                && cached_effect_events.init_indirect_dispatch_index
-                    == old_cached_child_info.init_indirect_dispatch_index
             {
                 trace!(
                     "ChildInfo didn't change for child entity {:?}, skipping component write.",
@@ -3775,7 +3631,6 @@ pub(crate) fn resolve_parents(
             parent_buffer_binding_source,
             local_child_index,
             global_child_index: u32::MAX, // fixed up later by fixup_parents()
-            init_indirect_dispatch_index: cached_effect_events.init_indirect_dispatch_index,
         };
         commands.entity(child_entity).insert(cached_child_info);
         trace!("Spawned CachedChildInfo on child entity {:?}", child_entity);
@@ -4070,8 +3925,11 @@ pub struct PipelineSystemParams<'w, 's> {
     indirect_batch_pipeline: Res<'w, IndirectBatchPipeline>,
     update_pipeline: ResMut<'w, ParticlesUpdatePipeline>,
     render_batch_pipeline: ResMut<'w, RenderBatchPipeline>,
+    init_indirect_batch_pipeline: ResMut<'w, InitIndirectBatchPipeline>,
     specialized_init_pipelines: ResMut<'w, SpecializedComputePipelines<ParticlesInitPipeline>>,
     specialized_update_pipelines: ResMut<'w, SpecializedComputePipelines<ParticlesUpdatePipeline>>,
+    specialized_init_indirect_batch_pipelines:
+        ResMut<'w, SpecializedComputePipelines<InitIndirectBatchPipeline>>,
     specialized_indirect_pipelines:
         ResMut<'w, SpecializedComputePipelines<DispatchIndirectPipeline>>,
     specialized_indirect_batch_pipelines:
@@ -4106,13 +3964,10 @@ pub(crate) fn prepare_effects(
     q_debug_all_entities: Query<MainEntity>,
     mut gpu_buffer_operations: ResMut<GpuBufferOperations>,
     mut sort_bind_groups: ResMut<SortBindGroups>,
-    mut init_fill_dispatch_queue: ResMut<InitFillDispatchQueue>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("prepare_effects").entered();
     trace!("prepare_effects");
-
-    init_fill_dispatch_queue.clear();
 
     // Workaround for too many params in system (TODO: refactor to split work?)
     let sim_params = read_only_params.sim_params.into_inner();
@@ -4122,6 +3977,9 @@ pub(crate) fn prepare_effects(
     let specialized_init_pipelines = pipelines.specialized_init_pipelines.into_inner();
     let specialized_update_pipelines = pipelines.specialized_update_pipelines.into_inner();
     let specialized_indirect_pipelines = pipelines.specialized_indirect_pipelines.into_inner();
+    let specialized_init_indirect_batch_pipelines = pipelines
+        .specialized_init_indirect_batch_pipelines
+        .into_inner();
     let specialized_indirect_batch_pipelines =
         pipelines.specialized_indirect_batch_pipelines.into_inner();
     let specialized_render_batch_pipelines =
@@ -4172,7 +4030,7 @@ pub(crate) fn prepare_effects(
 
     // Ensure the init indirect batch pipeline is created.
     if effects_meta.init_indirect_batch_pipeline_id == CachedComputePipelineId::INVALID {
-        effects_meta.init_indirect_batch_pipeline_id = specialized_indirect_batch_pipelines
+        effects_meta.init_indirect_batch_pipeline_id = specialized_init_indirect_batch_pipelines
             .specialize(
                 pipeline_cache,
                 &pipelines.init_indirect_batch_pipeline,
@@ -4258,42 +4116,6 @@ pub(crate) fn prepare_effects(
         } else {
             Some(extracted_effect.property_layout.min_binding_size())
         };
-
-        // Schedule some GPU buffer operation to update the number of workgroups to
-        // dispatch during the indirect init pass of this effect based on the number of
-        // GPU spawn events written in its buffer.
-        if let (Some(cached_effect_events), Some(cached_child_info)) =
-            (cached_effect_events, cached_child_info)
-        {
-            debug_assert_eq!(
-                GpuChildInfo::min_size().get() % 4,
-                0,
-                "Invalid GpuChildInfo alignment."
-            );
-
-            // Resolve parent entry
-            let Ok((_, _, _, _, _, _, cached_parent_info, _, _)) =
-                q_cached_effects.get(cached_child_info.parent)
-            else {
-                continue;
-            };
-            let Some(cached_parent_info) = cached_parent_info else {
-                error!("Effect {:?} indicates its parent is {:?}, but that parent effect is missing a CachedParentInfo component. This is a bug.", extracted_effect.render_entity.id(), cached_child_info.parent);
-                continue;
-            };
-
-            let init_indirect_dispatch_index = cached_effect_events.init_indirect_dispatch_index;
-            assert_eq!(0, cached_parent_info.byte_range.start % 4);
-            let global_child_index = cached_child_info.global_child_index;
-
-            // Schedule a fill dispatch
-            trace!(
-                "init_fill_dispatch.push(): src:global_child_index={} dst:init_indirect_dispatch_index={}",
-                global_child_index,
-                init_indirect_dispatch_index,
-            );
-            init_fill_dispatch_queue.enqueue(global_child_index, init_indirect_dispatch_index);
-        }
 
         // Create init pipeline key flags.
         let init_pipeline_key_flags = {
@@ -4533,8 +4355,6 @@ pub(crate) fn prepare_effects(
             spawner_index,
             spawn_count: extracted_effect.spawn_count,
             position: extracted_effect.transform.translation(),
-            init_indirect_dispatch_index: cached_child_info
-                .map(|cc| cc.init_indirect_dispatch_index),
         });
 
         // Update properties
@@ -4665,9 +4485,6 @@ pub(crate) fn prepare_effects(
             ping: 0,
             // Note: the indirect draw args are at the start of the GpuEffectMetadata struct
             indirect_render_index: dispatch_buffer_indices.effect_metadata_buffer_table_id.0,
-            init_indirect_dispatch_index: cached_effect_events
-                .map(|cee| cee.init_indirect_dispatch_index)
-                .unwrap_or_default(),
             sort_metadata_index,
             local_child_index,
             global_child_index,
@@ -4771,6 +4588,7 @@ pub(crate) fn batch_effects(
         &mut BatchInput,
     )>,
     sorted_effect_batches: ResMut<SortedEffectBatches>,
+    mut event_cache: ResMut<EventCache>,
 ) {
     trace!("batch_effects");
 
@@ -4810,6 +4628,8 @@ pub(crate) fn batch_effects(
 
     sorted_effect_batches.clear();
     sort_bind_groups.clear_sort_buffer();
+
+    event_cache.clear_indirect_dispatch_buffer();
 
     for entity in effect_sorter
         .effects
@@ -4931,12 +4751,11 @@ pub(crate) fn batch_effects(
         // Push indirect draw commands.
         let mut indirect_draw_command_offset = None;
         for &effect_batch_index in &effect_render_batch.effect_batch_indices {
-            let base_instance = sorted_effect_batches
+            let effect_batch = sorted_effect_batches
                 .batches
                 .get(effect_batch_index.0 as usize)
-                .unwrap()
-                .slice
-                .start;
+                .unwrap();
+            let base_instance = effect_batch.slice.start;
             let indirect_draw_command_index = match cached_mesh_location.indexed {
                 Some(_) => effects_meta.indexed_indirect_draw_command_buffer.push(
                     GpuIndexedIndirectDrawCommand {
@@ -4961,8 +4780,16 @@ pub(crate) fn batch_effects(
             }
         }
 
+        // Push init indirect draw command if necessary.
+
         let first_batch_effect_index_offset =
             effects_meta.render_batch_effect_index_buffer.len() as u32;
+
+        let first_effect_batch = sorted_effect_batches
+            .batches
+            .get(effect_render_batch.effect_batch_indices[0].0 as usize)
+            .expect("Didn't find the first batch in `sorted_effect_batches`");
+
         for &effect_batch_index in &effect_render_batch.effect_batch_indices {
             let sorted_effect_batch = sorted_effect_batches
                 .batches
@@ -4980,10 +4807,22 @@ pub(crate) fn batch_effects(
 
         let indirect_draw_command_offset = indirect_draw_command_offset.unwrap_or_default();
 
+        effect_render_batch.init_dispatch_indirect_buffer_row_index = if first_effect_batch
+            .layout_flags
+            .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS)
+        {
+            Some(event_cache.allocate_indirect_dispatch_entry())
+        } else {
+            None
+        };
+
         let render_batch_descriptor = GpuRenderBatchDescriptor {
             first_batch_effect_index_offset,
             last_batch_effect_index_offset,
             indirect_draw_command_offset,
+            init_indirect_dispatch_index: effect_render_batch
+                .init_dispatch_indirect_buffer_row_index
+                .unwrap_or(!0),
             mesh_is_indexed: if cached_mesh_location.indexed.is_some() {
                 1
             } else {
@@ -5051,6 +4890,7 @@ pub(crate) fn batch_effects(
             }
         }
 
+        // If we need to allocate space in init-related buffers, do that now.
         if first_effect_batch
             .layout_flags
             .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS)
@@ -5093,6 +4933,7 @@ pub(crate) fn batch_effects(
 pub(crate) fn prepare_late_gpu_resources(
     mut effects_meta: ResMut<EffectsMeta>,
     mut sort_bind_groups: ResMut<SortBindGroups>,
+    mut event_cache: ResMut<EventCache>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
@@ -5144,6 +4985,7 @@ pub(crate) fn prepare_late_gpu_resources(
         .allocate_gpu(&render_device, &render_queue);
 
     sort_bind_groups.write_sort_buffer(&render_device, &render_queue);
+    event_cache.write_buffers(&render_device, &render_queue);
 
     fn ensure_aligned_buffer_nonempty_and_write<T>(
         buffer: &mut AlignedBufferVec<T>,
@@ -6506,40 +6348,6 @@ pub(crate) fn prepare_gpu_resources(
     event_cache.prepare_buffers(&render_device, &render_queue, &mut effect_bind_groups);
 }
 
-/// Read the queued init fill dispatch operations, batch them together by
-/// contiguous source and destination entries in the buffers, and enqueue
-/// corresponding GPU buffer fill dispatch operations for all batches.
-///
-/// This system runs after the GPU buffers have been (re-)allocated in
-/// [`prepare_gpu_resources()`], so that it can read the new buffer IDs and
-/// reference them from the generic [`GpuBufferOperationQueue`].
-pub(crate) fn queue_init_fill_dispatch_ops(
-    event_cache: Res<EventCache>,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
-    mut init_fill_dispatch_queue: ResMut<InitFillDispatchQueue>,
-    mut gpu_buffer_operations: ResMut<GpuBufferOperations>,
-) {
-    // Submit all queued init fill dispatch operations with the proper buffers
-    if !init_fill_dispatch_queue.is_empty() {
-        let src_buffer = event_cache.child_infos().buffer();
-        let dst_buffer = event_cache.init_indirect_dispatch_buffer();
-        if let (Some(src_buffer), Some(dst_buffer)) = (src_buffer, dst_buffer) {
-            init_fill_dispatch_queue.submit(src_buffer, dst_buffer, &mut gpu_buffer_operations);
-        } else {
-            if src_buffer.is_none() {
-                warn!("Event cache has no allocated GpuChildInfo buffer, but there's {} init fill dispatch operation(s) queued. Ignoring those operations. This will prevent child particles from spawning.", init_fill_dispatch_queue.queue.len());
-            }
-            if dst_buffer.is_none() {
-                warn!("Event cache has no allocated GpuDispatchIndirect buffer, but there's {} init fill dispatch operation(s) queued. Ignoring those operations. This will prevent child particles from spawning.", init_fill_dispatch_queue.queue.len());
-            }
-        }
-    }
-
-    // Once all GPU operations for this frame are enqueued, upload them to GPU
-    gpu_buffer_operations.end_frame(&render_device, &render_queue);
-}
-
 pub(crate) fn prepare_bind_groups(
     mut effects_meta: ResMut<EffectsMeta>,
     mut effect_cache: ResMut<EffectCache>,
@@ -7690,7 +7498,6 @@ impl Node for VfxSimulateNode {
         let event_cache = world.resource::<EventCache>();
         let gpu_buffer_operations = world.resource::<GpuBufferOperations>();
         let sorted_effect_batches = world.resource::<SortedEffectBatches>();
-        let init_fill_dispatch_queue = world.resource::<InitFillDispatchQueue>();
         let render_device = world.resource::<RenderDevice>();
 
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
@@ -7707,7 +7514,6 @@ impl Node for VfxSimulateNode {
             effects_meta
                 .effect_metadata_buffer
                 .write_buffer(command_encoder);
-            event_cache.write_buffers(command_encoder);
         }
 
         // Compute init fill dispatch pass - Fill the indirect dispatch structs for any
@@ -7772,67 +7578,6 @@ impl Node for VfxSimulateNode {
                 &[],
             );
 
-            // Dispatch init compute jobs for applicable effect batches
-            for effect_batch in sorted_effect_batches.iter() {
-                // Dispatch init job
-                match effect_batch.spawn_info {
-                    // Indirect dispatch via GPU spawn events
-                    BatchSpawnInfo::GpuSpawner {
-                        init_indirect_dispatch_index,
-                        ..
-                    } => {
-                        if !prepare_to_dispatch_init_job(
-                            effect_batch,
-                            0,
-                            &mut compute_pass,
-                            effect_cache,
-                            effect_bind_groups,
-                            property_bind_groups,
-                            effects_meta,
-                            batch_descriptor_size,
-                        ) {
-                            continue;
-                        }
-
-                        let spawner_base = effect_batch.spawner_base;
-
-                        assert!(effect_batch
-                            .layout_flags
-                            .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS));
-
-                        // Note: the indirect offset of a dispatch workgroup only needs
-                        // 4-byte alignment
-                        assert_eq!(GpuDispatchIndirect::min_size().get(), 12);
-                        let indirect_offset = init_indirect_dispatch_index as u64 * 12;
-
-                        trace!(
-                            "record commands for indirect init pipeline of effect {:?} \
-                                init_indirect_dispatch_index={} \
-                                indirect_offset={} \
-                                spawner_base={} \
-                                property_key={:?}...",
-                            effect_batch.handle,
-                            init_indirect_dispatch_index,
-                            indirect_offset,
-                            spawner_base,
-                            effect_batch.property_key,
-                        );
-
-                        compute_pass.dispatch_workgroups_indirect(
-                            event_cache.init_indirect_dispatch_buffer().unwrap(),
-                            indirect_offset,
-                        );
-
-                        trace!("init compute dispatched");
-                    }
-
-                    // Direct dispatch via CPU spawn count
-                    BatchSpawnInfo::CpuSpawner { .. } => {
-                        // These are handled below.
-                    }
-                }
-            }
-
             // Dispatch init compute jobs for applicable render batches
             for (_, render_batch) in sorted_effect_batches.render_batches.iter() {
                 let Some(&representative_effect_batch_index) =
@@ -7846,6 +7591,21 @@ impl Node for VfxSimulateNode {
                     continue;
                 };
 
+                if !prepare_to_dispatch_init_job(
+                    representative_effect_batch,
+                    render_batch.batch_descriptor_index,
+                    &mut compute_pass,
+                    effect_cache,
+                    effect_bind_groups,
+                    property_bind_groups,
+                    effects_meta,
+                    batch_descriptor_size,
+                ) {
+                    continue;
+                }
+
+                let spawner_base = representative_effect_batch.spawner_base;
+
                 // Dispatch init job
                 match representative_effect_batch.spawn_info {
                     // Direct dispatch via CPU spawn count
@@ -7853,21 +7613,6 @@ impl Node for VfxSimulateNode {
                         assert!(!representative_effect_batch
                             .layout_flags
                             .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS));
-
-                        if !prepare_to_dispatch_init_job(
-                            representative_effect_batch,
-                            render_batch.batch_descriptor_index,
-                            &mut compute_pass,
-                            effect_cache,
-                            effect_bind_groups,
-                            property_bind_groups,
-                            effects_meta,
-                            batch_descriptor_size,
-                        ) {
-                            continue;
-                        }
-
-                        let spawner_base = representative_effect_batch.spawner_base;
 
                         const WORKGROUP_SIZE: u32 = 64;
                         let spawn_count: u32 =
@@ -7896,7 +7641,31 @@ impl Node for VfxSimulateNode {
                         compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
                     }
 
-                    BatchSpawnInfo::GpuSpawner { .. } => {}
+                    BatchSpawnInfo::GpuSpawner { .. } => {
+                        assert!(representative_effect_batch
+                            .layout_flags
+                            .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS));
+
+                        trace!(
+                            "record commands for init pipeline of effect {:?} \
+                                indirect spawner_base={} property_key={:?}...",
+                            representative_effect_batch.handle,
+                            spawner_base,
+                            representative_effect_batch.property_key,
+                        );
+
+                        let indirect_offset =
+                            render_batch.init_dispatch_indirect_buffer_row_index.expect(
+                                "Batches with a GPU spawner need an init dispatch indirect \
+                                buffer row index",
+                            ) as u64
+                                * u64::from(GpuDispatchIndirect::min_size());
+
+                        compute_pass.dispatch_workgroups_indirect(
+                            event_cache.init_indirect_dispatch_buffer().unwrap(),
+                            indirect_offset,
+                        );
+                    }
                 }
             }
         }
@@ -8531,80 +8300,5 @@ mod tests {
 
         // assert!(limits.storage_buffer_align().get() >= 1);
         assert!(limits.effect_metadata_offset(256) >= 256 * GpuEffectMetadata::min_size().get());
-    }
-
-    #[cfg(feature = "gpu_tests")]
-    #[test]
-    fn gpu_ops_ifda() {
-        use crate::test_utils::MockRenderer;
-
-        let renderer = MockRenderer::new();
-        let device = renderer.device();
-        let render_queue = renderer.queue();
-
-        let mut world = World::new();
-        world.insert_resource(device.clone());
-        let mut buffer_ops = GpuBufferOperations::from_world(&mut world);
-
-        let src_buffer = device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: 256,
-            usage: BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let dst_buffer = device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: 256,
-            usage: BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
-        // Two consecutive ops can be merged. This includes having contiguous slices
-        // both in source and destination.
-        buffer_ops.begin_frame();
-        {
-            let mut q = InitFillDispatchQueue::default();
-            q.enqueue(0, 0);
-            assert_eq!(q.queue.len(), 1);
-            q.enqueue(1, 1);
-            // Ops are not batched yet
-            assert_eq!(q.queue.len(), 2);
-            // On submit, the ops get batched together
-            q.submit(&src_buffer, &dst_buffer, &mut buffer_ops);
-            assert_eq!(buffer_ops.args_buffer.len(), 1);
-        }
-        buffer_ops.end_frame(&device, &render_queue);
-
-        // Even if out of order, the init fill dispatch ops are batchable. Here the
-        // offsets are enqueued inverted.
-        buffer_ops.begin_frame();
-        {
-            let mut q = InitFillDispatchQueue::default();
-            q.enqueue(1, 1);
-            assert_eq!(q.queue.len(), 1);
-            q.enqueue(0, 0);
-            // Ops are not batched yet
-            assert_eq!(q.queue.len(), 2);
-            // On submit, the ops get batched together
-            q.submit(&src_buffer, &dst_buffer, &mut buffer_ops);
-            assert_eq!(buffer_ops.args_buffer.len(), 1);
-        }
-        buffer_ops.end_frame(&device, &render_queue);
-
-        // However, both the source and destination need to be contiguous at the same
-        // time. Here they are mixed so we can't batch.
-        buffer_ops.begin_frame();
-        {
-            let mut q = InitFillDispatchQueue::default();
-            q.enqueue(0, 1);
-            assert_eq!(q.queue.len(), 1);
-            q.enqueue(1, 0);
-            // Ops are not batched yet
-            assert_eq!(q.queue.len(), 2);
-            // On submit, the ops cannot get batched together
-            q.submit(&src_buffer, &dst_buffer, &mut buffer_ops);
-            assert_eq!(buffer_ops.args_buffer.len(), 2);
-        }
-        buffer_ops.end_frame(&device, &render_queue);
     }
 }

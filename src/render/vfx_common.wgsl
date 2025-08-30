@@ -66,8 +66,6 @@ struct EventBuffer {
 
 /// Info about a single child of a parent effect.
 struct ChildInfo {
-    /// Index of the effect's IndirectDispatch entry in the global init indirect dispatch array.
-    init_indirect_dispatch_index: u32,
     /// Number of events in the associated event buffer.
 #ifdef CHILD_INFO_EVENT_COUNT_IS_ATOMIC
     event_count: atomic<i32>,
@@ -150,10 +148,6 @@ struct EffectMetadata {
     /// Index of the [`GpuRenderIndirect`] struct inside the global
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     indirect_render_index: u32,
-    /// Offset (in u32 count) of the init indirect dispatch struct inside its
-    /// buffer. This avoids having to align those 16-byte structs to the GPU
-    /// alignment (at least 32 bytes, even 256 bytes on some).
-    init_indirect_dispatch_index: u32,
     sort_metadata_index: u32,
     /// Index of this effect into its parent's ChildInfo array
     /// ([`EffectChildren::effect_cache_ids`] and its associated GPU
@@ -202,6 +196,7 @@ struct BatchDescriptor {
     first_batch_effect_index_offset: u32,
     last_batch_effect_index_offset: u32,
     indirect_draw_command_offset: u32,
+    init_indirect_dispatch_index: u32,
     /// 1 if the mesh is indexed or 0 if it isn't.
     mesh_is_indexed: u32,
 

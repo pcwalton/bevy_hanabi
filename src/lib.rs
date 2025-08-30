@@ -943,10 +943,10 @@ impl EffectShaderSource {
         // one or more other effects.
         let mut emit_event_buffer_bindings_code = String::with_capacity(256);
         emit_event_buffer_bindings_code.push_str(
-            "@group(3) @binding(4) var<storage, read_write> child_info_buffer : ChildInfoBuffer;\n",
+            "@group(3) @binding(3) var<storage, read_write> child_info_buffer : ChildInfoBuffer;\n",
         );
         let mut emit_event_buffer_append_funcs_code = String::with_capacity(1024);
-        let base_binding_index = 3;
+        let base_binding_index = 4;
         for i in 0..num_event_bindings {
             let binding_index = base_binding_index + i;
             emit_event_buffer_bindings_code.push_str(&format!(
