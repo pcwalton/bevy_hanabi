@@ -8079,6 +8079,12 @@ impl Node for VfxSimulateNode {
                     else {
                         continue;
                     };
+                    if !representative_effect_batch
+                        .layout_flags
+                        .contains(LayoutFlags::RIBBONS)
+                    {
+                        continue;
+                    }
 
                     let Some(effect_buffer) =
                         effect_cache.get_buffer(representative_effect_batch.buffer_index)
