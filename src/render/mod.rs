@@ -3823,7 +3823,6 @@ pub(crate) fn prepare_effects(
                 });
 
                 // Write properties for this effect if they were modified.
-                // FIXME - This doesn't work with batching!
                 if let Some(property_data) = &extracted_effect.property_data {
                     trace!(
                     "Properties changed; (re-)uploading to GPU... New data: {} bytes. Capacity: {} bytes.",
@@ -4103,9 +4102,9 @@ pub(crate) fn batch_effects(
         //     continue;
         // }
 
-        // Spawn one EffectBatch per instance (no batching; TODO). This contains
-        // most of the data needed to drive rendering. However this doesn't drive
-        // rendering; this is just storage.
+        // Spawn one EffectBatch per instance. This contains most of the data
+        // needed to drive rendering. However this doesn't drive rendering;
+        // this is just storage.
         let effect_batch = EffectBatch::from_input(
             cached_mesh,
             cached_effect_events,
@@ -4684,17 +4683,14 @@ pub struct EffectBindGroups {
     images: HashMap<AssetId<Image>, BindGroup>,
     /// Map from buffer index to its metadata bind group (group 3) for the init
     /// pass.
-    // FIXME - prevents batching; this should be keyed off the buffer index
     init_metadata_bind_groups:
         HashMap<EffectMetadataBindGroupKey, CachedBindGroup<InitMetadataBindGroupKey>>,
     /// Map from buffer index to its metadata bind group (group 3) for the
     /// update pass.
-    // FIXME - prevents batching; this should be keyed off the buffer index
     update_metadata_bind_groups:
         HashMap<EffectMetadataBindGroupKey, CachedBindGroup<UpdateMetadataBindGroupKey>>,
     /// Map from buffer index to its metadata bind group (group 2) for the
     /// render pass.
-    // FIXME - prevents batching; this should be keyed off the buffer index
     render_metadata_bind_groups:
         HashMap<EffectMetadataBindGroupKey, CachedBindGroup<RenderMetadataBindGroupKey>>,
     /// Map from an effect material to its bind group.
@@ -4702,16 +4698,10 @@ pub struct EffectBindGroups {
 }
 
 /// Identifies a bind group for effect metadata.
-///
-/// FIXME: This should eventually go away once we can batch init, update, and
-/// render. Then we'll have only one bind group per buffer.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EffectMetadataBindGroupKey {
     /// The index of the buffer.
     pub buffer_index: u32,
-    /// The offset of the first particle index for this effect in the indirect
-    /// index buffer.
-    pub base_instance: u32,
 }
 
 impl EffectBindGroups {
@@ -4831,7 +4821,6 @@ impl EffectBindGroups {
             .init_metadata_bind_groups
             .entry(EffectMetadataBindGroupKey {
                 buffer_index: effect_batch.buffer_index,
-                base_instance: effect_batch.slice.start,
             })
             .and_modify(|cbg| {
                 if cbg.key != key {
@@ -4983,7 +4972,6 @@ impl EffectBindGroups {
             .update_metadata_bind_groups
             .entry(EffectMetadataBindGroupKey {
                 buffer_index: effect_batch.buffer_index,
-                base_instance: effect_batch.slice.start,
             })
             .and_modify(|cbg| {
                 if cbg.key != key {
@@ -5091,7 +5079,6 @@ impl EffectBindGroups {
             .render_metadata_bind_groups
             .entry(EffectMetadataBindGroupKey {
                 buffer_index: effect_batch.buffer_index,
-                base_instance: effect_batch.slice.start,
             })
             .and_modify(|cbg| {
                 if cbg.key != key {
@@ -5401,7 +5388,6 @@ fn emit_binned_draw<T, F, G>(
                 continue;
             }
 
-            // FIXME: Reenable.
             // Check if batch contains any entity visible in the current view. Otherwise we
             // can skip the entire batch. Note: This is O(n^2) but (unlike
             // the Sprite renderer this is inspired from) we don't expect more than
@@ -6219,7 +6205,6 @@ pub(crate) fn prepare_bind_groups(
         }
 
         // Bind group @3 of init pass
-        // FIXME - this is instance-dependent, not buffer-dependent
         {
             let consume_gpu_spawn_events = effect_batch
                 .layout_flags
@@ -6582,7 +6567,6 @@ fn draw<'w>(
             .render_metadata_bind_groups
             .get(&EffectMetadataBindGroupKey {
                 buffer_index: effect_batch.buffer_index,
-                base_instance: effect_batch.slice.start,
             })
     else {
         error!(
@@ -7264,7 +7248,6 @@ impl Node for VfxSimulateNode {
                 let Some(metadata_bind_group) = effect_bind_groups.update_metadata_bind_groups.get(
                     &EffectMetadataBindGroupKey {
                         buffer_index: representative_effect_batch.buffer_index,
-                        base_instance: representative_effect_batch.slice.start,
                     },
                 ) else {
                     error!(
@@ -7644,7 +7627,6 @@ fn prepare_to_dispatch_init_job(
             .init_metadata_bind_groups
             .get(&EffectMetadataBindGroupKey {
                 buffer_index: effect_batch.buffer_index,
-                base_instance: effect_batch.slice.start,
             })
     else {
         error!(

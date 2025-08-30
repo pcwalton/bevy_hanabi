@@ -183,7 +183,6 @@ struct EffectMetadata {
     /// of an array, or sometimes individually as a single unit. In the later case,
     /// we need it to be aligned to the GPU limits of the device. That limit is only
     /// known at runtime when initializing the WebGPU device.
-    // FIXME - not anymore, but would be again with proper batching, so keep for now
     {{EFFECT_METADATA_PADDING}}
 }
 

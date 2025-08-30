@@ -1504,8 +1504,6 @@ mod gpu_tests {
 
         // Remove the first effect instance
         let buffer_state = effect_cache.remove(&effect1).unwrap();
-        // Note: currently batching is disabled, so each instance has its own buffer,
-        // which becomes unused once the instance is destroyed.
         assert_eq!(buffer_state, BufferState::Free);
         assert_eq!(effect_cache.buffers().len(), 2);
         {
@@ -1524,7 +1522,6 @@ mod gpu_tests {
             item_size
         );
         assert_eq!(slice3.range, 0..capacity);
-        // Note: currently batching is disabled, so each instance has its own buffer.
         assert_eq!(effect_cache.buffers().len(), 2);
         {
             let buffers = effect_cache.buffers();
