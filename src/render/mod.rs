@@ -5789,7 +5789,7 @@ fn emit_sorted_draw<T, F>(
             // TODO - Profile to confirm.
             #[cfg(feature = "trace")]
             let _span_check_vis = bevy::log::info_span!("check_visibility").entered();
-            /*let has_visible_entity = effect_batch
+            let has_visible_entity = effect_batch
                 .entities
                 .iter()
                 .any(|index| view_entities.contains(*index as usize));
@@ -5797,7 +5797,6 @@ fn emit_sorted_draw<T, F>(
                 trace!("No visible entity for view, not emitting any draw call.");
                 continue;
             }
-            */
             #[cfg(feature = "trace")]
             _span_check_vis.exit();
 
@@ -5972,7 +5971,6 @@ fn emit_binned_draw<T, F, G>(
             }
 
             // FIXME: Reenable.
-            /*
             // Check if batch contains any entity visible in the current view. Otherwise we
             // can skip the entire batch. Note: This is O(n^2) but (unlike
             // the Sprite renderer this is inspired from) we don't expect more than
@@ -5991,7 +5989,6 @@ fn emit_binned_draw<T, F, G>(
             }
             #[cfg(feature = "trace")]
             _span_check_vis.exit();
-            */
 
             // Create and cache the bind group layout for this texture layout
             render_pipeline.cache_material(&effect_batch.texture_layout);
@@ -7258,7 +7255,6 @@ impl Draw<Transparent2d> for DrawEffects {
         view: Entity,
         item: &Transparent2d,
     ) -> Result<(), DrawError> {
-        /*
         trace!("Draw<Transparent2d>: view={:?}", view);
         draw(
             world,
@@ -7268,7 +7264,6 @@ impl Draw<Transparent2d> for DrawEffects {
             item.pipeline,
             &mut self.params,
         );
-        */
         Ok(())
     }
 }
