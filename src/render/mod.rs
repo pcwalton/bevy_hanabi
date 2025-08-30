@@ -66,8 +66,8 @@ use crate::{
     calc_func_id,
     render::{
         batch::{
-            InstanceInput, EffectBatchKey, EffectDrawBatch, EffectInstanceIndex, EffectSorter,
-            EffectToBeSorted, InitAndUpdatePipelineIds,
+            EffectBatchKey, EffectDrawBatch, EffectInstanceIndex, EffectSorter, EffectToBeSorted,
+            InitAndUpdatePipelineIds, InstanceInput,
         },
         effect_cache::DispatchBufferIndices,
     },
@@ -4535,79 +4535,56 @@ impl Material {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct BindingKey {
-    pub buffer_id: BufferId,
-    pub offset: u32,
-    pub size: NonZeroU32,
-}
-
-impl<'a> From<BufferSlice<'a>> for BindingKey {
-    fn from(value: BufferSlice<'a>) -> Self {
-        Self {
-            buffer_id: value.buffer.id(),
-            offset: value.offset,
-            size: value.size,
-        }
-    }
-}
-
-impl<'a> From<&BufferSlice<'a>> for BindingKey {
-    fn from(value: &BufferSlice<'a>) -> Self {
-        Self {
-            buffer_id: value.buffer.id(),
-            offset: value.offset,
-            size: value.size,
-        }
-    }
-}
-
-impl From<&BufferBindingSource> for BindingKey {
-    fn from(value: &BufferBindingSource) -> Self {
-        Self {
-            buffer_id: value.buffer.id(),
-            offset: value.offset,
-            size: value.size,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ConsumeEventKey {
     child_infos_buffer_id: BufferId,
-    events: BindingKey,
+    events: BufferId,
 }
 
 impl From<&ConsumeEventBuffers<'_>> for ConsumeEventKey {
     fn from(value: &ConsumeEventBuffers) -> Self {
         Self {
             child_infos_buffer_id: value.child_infos_buffer.id(),
-            events: value.events.into(),
+            events: value.events.buffer.id(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct InitMetadataBindGroupLookupKey {
+    pub buffer_index: u32,
+    pub consume_event_buffer: Option<BufferId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct InitMetadataBindGroupKey {
     pub buffer_index: u32,
     pub effect_metadata_buffer: BufferId,
-    pub effect_metadata_offset: u32,
     pub consume_event_key: Option<ConsumeEventKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct UpdateMetadataBindGroupLookupKey {
+    pub buffer_index: u32,
+    pub event_buffers_keys: Vec<BufferId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct UpdateMetadataBindGroupKey {
     pub buffer_index: u32,
     pub effect_metadata_buffer: BufferId,
-    pub effect_metadata_offset: u32,
     pub child_info_buffer_id: Option<BufferId>,
-    pub event_buffers_keys: Vec<BindingKey>,
+    pub event_buffers_keys: Vec<BufferId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RenderMetadataBindGroupLookupKey {
+    pub buffer_index: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RenderMetadataBindGroupKey {
     pub buffer_index: u32,
     pub effect_metadata_buffer: BufferId,
-    pub effect_metadata_offset: u32,
 }
 
 struct CachedBindGroup<K: Eq> {
@@ -4675,24 +4652,25 @@ pub struct EffectBindGroups {
     /// Map from buffer index to its metadata bind group (group 3) for the init
     /// pass.
     init_metadata_bind_groups:
-        HashMap<EffectMetadataBindGroupKey, CachedBindGroup<InitMetadataBindGroupKey>>,
+        HashMap<InitMetadataBindGroupLookupKey, CachedBindGroup<InitMetadataBindGroupKey>>,
     /// Map from buffer index to its metadata bind group (group 3) for the
     /// update pass.
     update_metadata_bind_groups:
-        HashMap<EffectMetadataBindGroupKey, CachedBindGroup<UpdateMetadataBindGroupKey>>,
+        HashMap<UpdateMetadataBindGroupLookupKey, CachedBindGroup<UpdateMetadataBindGroupKey>>,
     /// Map from buffer index to its metadata bind group (group 2) for the
     /// render pass.
     render_metadata_bind_groups:
-        HashMap<EffectMetadataBindGroupKey, CachedBindGroup<RenderMetadataBindGroupKey>>,
+        HashMap<RenderMetadataBindGroupLookupKey, CachedBindGroup<RenderMetadataBindGroupKey>>,
     /// Map from an effect material to its bind group.
     material_bind_groups: HashMap<Material, BindGroup>,
 }
 
 /// Identifies a bind group for effect metadata.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct EffectMetadataBindGroupKey {
     /// The index of the buffer.
     pub buffer_index: u32,
+    pub event_buffers_keys: Vec<BufferId>,
 }
 
 impl EffectBindGroups {
@@ -4707,7 +4685,6 @@ impl EffectBindGroups {
     pub(self) fn get_or_create_init_metadata(
         &mut self,
         effect_instance: &EffectInstance,
-        gpu_limits: &GpuLimits,
         render_device: &RenderDevice,
         layout: &BindGroupLayout,
         effect_metadata_buffer: &Buffer,
@@ -4720,12 +4697,9 @@ impl EffectBindGroups {
             ..
         } = &effect_instance.dispatch_buffer_indices;
 
-        let effect_metadata_offset =
-            gpu_limits.effect_metadata_offset(effect_metadata_buffer_table_id.0) as u32;
         let key = InitMetadataBindGroupKey {
             buffer_index: effect_instance.buffer_index,
             effect_metadata_buffer: effect_metadata_buffer.id(),
-            effect_metadata_offset,
             consume_event_key: consume_event_buffers.as_ref().map(Into::into),
         };
 
@@ -4810,8 +4784,9 @@ impl EffectBindGroups {
 
         Ok(&self
             .init_metadata_bind_groups
-            .entry(EffectMetadataBindGroupKey {
+            .entry(InitMetadataBindGroupLookupKey {
                 buffer_index: effect_instance.buffer_index,
+                consume_event_buffer: key.consume_event_key.as_ref().map(|consume_event_key| consume_event_key.events),
             })
             .and_modify(|cbg| {
                 if cbg.key != key {
@@ -4825,13 +4800,12 @@ impl EffectBindGroups {
                 }
             })
             .or_insert_with(|| {
-                trace!("Inserting new bind group for init metadata@3 with key={:?}", key);
-                CachedBindGroup {
-                    key,
-                    bind_group: make_entry(),
-                }
-            })
-            .bind_group)
+                trace!(
+                    "Inserting new bind group for init metadata@3 with key={:?}",
+                    key
+                );
+                CachedBindGroup { key, bind_group: make_entry() }
+            }).bind_group)
     }
 
     /// Retrieve the metadata@3 bind group for the update pass, creating it if
@@ -4870,15 +4844,12 @@ impl EffectBindGroups {
 
         let event_buffers_keys = event_buffers
             .iter()
-            .map(|(_, buffer_binding_source)| buffer_binding_source.into())
+            .map(|(_, buffer_binding_source)| buffer_binding_source.buffer.id())
             .collect::<Vec<_>>();
 
         let key = UpdateMetadataBindGroupKey {
             buffer_index: effect_instance.buffer_index,
             effect_metadata_buffer: effect_metadata_buffer.id(),
-            effect_metadata_offset: gpu_limits
-                .effect_metadata_offset(effect_metadata_buffer_table_id.0)
-                as u32,
             child_info_buffer_id,
             event_buffers_keys,
         };
@@ -4964,8 +4935,9 @@ impl EffectBindGroups {
 
         Ok(&self
             .update_metadata_bind_groups
-            .entry(EffectMetadataBindGroupKey {
+            .entry(UpdateMetadataBindGroupLookupKey {
                 buffer_index: effect_instance.buffer_index,
+                event_buffers_keys: key.event_buffers_keys.clone(),
             })
             .and_modify(|cbg| {
                 if cbg.key != key {
@@ -4987,8 +4959,7 @@ impl EffectBindGroups {
                     key: key.clone(),
                     bind_group: make_entry(),
                 }
-            })
-            .bind_group)
+            }).bind_group)
     }
 
     /// Retrieve the metadata@2 bind group for the render pass, creating it if
@@ -4996,7 +4967,6 @@ impl EffectBindGroups {
     pub(self) fn get_or_create_render_metadata(
         &mut self,
         effect_instance: &EffectInstance,
-        gpu_limits: &GpuLimits,
         render_device: &RenderDevice,
         layout: &BindGroupLayout,
         effect_metadata_buffer: &Buffer,
@@ -5011,9 +4981,6 @@ impl EffectBindGroups {
         let key = RenderMetadataBindGroupKey {
             buffer_index: effect_instance.buffer_index,
             effect_metadata_buffer: effect_metadata_buffer.id(),
-            effect_metadata_offset: gpu_limits
-                .effect_metadata_offset(effect_metadata_buffer_table_id.0)
-                as u32,
         };
 
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
@@ -5071,7 +5038,7 @@ impl EffectBindGroups {
 
         Ok(&self
             .render_metadata_bind_groups
-            .entry(EffectMetadataBindGroupKey {
+            .entry(RenderMetadataBindGroupLookupKey {
                 buffer_index: effect_instance.buffer_index,
             })
             .and_modify(|cbg| {
@@ -5094,8 +5061,7 @@ impl EffectBindGroups {
                     key,
                     bind_group: make_entry(),
                 }
-            })
-            .bind_group)
+            }).bind_group)
     }
 }
 
@@ -6231,7 +6197,6 @@ pub(crate) fn prepare_bind_groups(
             if effect_bind_groups
                 .get_or_create_init_metadata(
                     effect_instance,
-                    &effects_meta.gpu_limits,
                     &render_device,
                     init_metadata_layout,
                     effects_meta.effect_metadata_buffer.buffer().unwrap(),
@@ -6295,7 +6260,6 @@ pub(crate) fn prepare_bind_groups(
             if effect_bind_groups
                 .get_or_create_render_metadata(
                     effect_instance,
-                    &effects_meta.gpu_limits,
                     &render_device,
                     render_metadata_layout,
                     effects_meta.effect_metadata_buffer.buffer().unwrap(),
@@ -6561,7 +6525,7 @@ fn draw<'w>(
     let Some(metadata_bind_group) =
         effect_bind_groups
             .render_metadata_bind_groups
-            .get(&EffectMetadataBindGroupKey {
+            .get(&RenderMetadataBindGroupLookupKey {
                 buffer_index: effect_instance.buffer_index,
             })
     else {
@@ -7001,6 +6965,7 @@ impl Node for VfxSimulateNode {
                     render_batch.batch_descriptor_index,
                     &mut compute_pass,
                     effect_cache,
+                    event_cache,
                     effect_bind_groups,
                     property_bind_groups,
                     effects_meta,
@@ -7223,32 +7188,37 @@ impl Node for VfxSimulateNode {
                 else {
                     continue;
                 };
-                let Some(representative_effect_batch) =
+                let Some(representative_effect_instance) =
                     sorted_effect_batches.get(representative_effect_batch_index)
                 else {
                     continue;
                 };
 
                 // Fetch bind group particle@1
-                let Some(particle_bind_group) =
-                    effect_cache.particle_sim_bind_group(representative_effect_batch.buffer_index)
+                let Some(particle_bind_group) = effect_cache
+                    .particle_sim_bind_group(representative_effect_instance.buffer_index)
                 else {
                     error!(
                         "Failed to find update particle@1 bind group for buffer index {}",
-                        representative_effect_batch.buffer_index
+                        representative_effect_instance.buffer_index
                     );
                     continue;
                 };
 
                 // Fetch bind group metadata@3
                 let Some(metadata_bind_group) = effect_bind_groups.update_metadata_bind_groups.get(
-                    &EffectMetadataBindGroupKey {
-                        buffer_index: representative_effect_batch.buffer_index,
+                    &UpdateMetadataBindGroupLookupKey {
+                        buffer_index: representative_effect_instance.buffer_index,
+                        event_buffers_keys: representative_effect_instance
+                            .child_event_buffers
+                            .iter()
+                            .map(|(_, buffer_binding_source)| buffer_binding_source.buffer.id())
+                            .collect(),
                     },
                 ) else {
                     error!(
                         "Failed to find update metadata@3 bind group for buffer index {}",
-                        representative_effect_batch.buffer_index
+                        representative_effect_instance.buffer_index
                     );
                     continue;
                 };
@@ -7256,7 +7226,7 @@ impl Node for VfxSimulateNode {
                 // Fetch compute pipeline
                 if compute_pass
                     .set_cached_compute_pipeline(
-                        representative_effect_batch
+                        representative_effect_instance
                             .init_and_update_pipeline_ids
                             .update,
                     )
@@ -7266,13 +7236,13 @@ impl Node for VfxSimulateNode {
                 }
 
                 // Compute dynamic offsets
-                let spawner_index = representative_effect_batch.spawner_base;
+                let spawner_index = representative_effect_instance.spawner_base;
                 let spawner_aligned_size = effects_meta.spawner_buffer.aligned_size();
                 assert!(spawner_aligned_size >= GpuSpawnerParams::min_size().get() as usize);
 
                 trace!(
                     "record commands for update pipeline of effect {:?} spawner_base={}",
-                    representative_effect_batch.handle,
+                    representative_effect_instance.handle,
                     spawner_index,
                 );
 
@@ -7281,7 +7251,7 @@ impl Node for VfxSimulateNode {
                 compute_pass.set_bind_group(
                     2,
                     property_bind_groups
-                        .get(representative_effect_batch.property_key.as_ref())
+                        .get(representative_effect_instance.property_key.as_ref())
                         .unwrap(),
                     &[],
                 );
@@ -7583,6 +7553,7 @@ fn prepare_to_dispatch_init_job(
     batch_descriptor_index: u32,
     compute_pass: &mut HanabiComputePass,
     effect_cache: &EffectCache,
+    event_cache: &EventCache,
     effect_bind_groups: &EffectBindGroups,
     property_bind_groups: &PropertyBindGroups,
     effects_meta: &EffectsMeta,
@@ -7619,11 +7590,17 @@ fn prepare_to_dispatch_init_job(
     };
 
     // Fetch bind group metadata@3
+    let consume_event_buffer = representative_effect_instance
+        .cached_effect_events
+        .as_ref()
+        .and_then(|cached_effect_events| event_cache.get_buffer(cached_effect_events.buffer_index))
+        .map(|buffer| buffer.id());
     let Some(metadata_bind_group) =
         effect_bind_groups
             .init_metadata_bind_groups
-            .get(&EffectMetadataBindGroupKey {
+            .get(&InitMetadataBindGroupLookupKey {
                 buffer_index: representative_effect_instance.buffer_index,
+                consume_event_buffer,
             })
     else {
         error!(
