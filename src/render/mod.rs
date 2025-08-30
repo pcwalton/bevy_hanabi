@@ -5189,7 +5189,6 @@ fn emit_sorted_draw<T, F>(
                 .intersects(LayoutFlags::USE_ALPHA_MASK | LayoutFlags::OPAQUE)
             {
                 trace!("Non-transparent batch. Skipped.");
-                warn!("Non-transparent batch. Skipped.");
                 continue;
             }
 
