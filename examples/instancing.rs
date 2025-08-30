@@ -78,7 +78,7 @@ impl InstanceManager {
         *entry = Some(
             commands
                 .spawn((
-                    Name::new(format!("{:?}", pos)),
+                    Name::new(format!("{pos:?}")),
                     ParticleEffect::new(if alt {
                         self.alt_effect.clone()
                     } else {

@@ -190,24 +190,6 @@ impl<T: Pod + ShaderSize> AlignedBufferVec<T> {
         self.aligned_size
     }
 
-    /// Calculate a dynamic byte offset for a bind group from an array element
-    /// index.
-    ///
-    /// This returns the product of `index` by the internal [`aligned_size()`].
-    ///
-    /// # Panic
-    ///
-    /// Panics if the `index` is too large, producing a byte offset larger than
-    /// `u32::MAX`.
-    ///
-    /// [`aligned_size()`]: crate::AlignedBufferVec::aligned_size
-    #[inline]
-    pub fn dynamic_offset(&self, index: usize) -> u32 {
-        let offset = self.aligned_size * index;
-        assert!(offset <= u32::MAX as usize);
-        u32::try_from(offset).expect("AlignedBufferVec index out of bounds")
-    }
-
     #[inline]
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {

@@ -36,8 +36,7 @@ use crate::{
         IndirectBatchPipeline, InitIndirectBatchPipeline, ParticlesInitPipeline,
         ParticlesRenderPipeline, ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache,
         RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams, SortBindGroups,
-        SortedEffectBatches, StorageType as _, UtilsPipeline, VfxSimulateDriverNode,
-        VfxSimulateNode,
+        SortedEffectBatches, StorageType as _, VfxSimulateDriverNode, VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -462,7 +461,6 @@ impl Plugin for HanabiPlugin {
             .init_resource::<EffectBindGroups>()
             .init_resource::<PropertyBindGroups>()
             .insert_resource(sort_bind_groups)
-            .init_resource::<UtilsPipeline>()
             .init_resource::<GpuBufferOperations>()
             .init_resource::<DispatchIndirectPipeline>()
             .init_resource::<SpecializedComputePipelines<DispatchIndirectPipeline>>()

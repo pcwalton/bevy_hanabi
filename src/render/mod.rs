@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     hash::{DefaultHasher, Hash, Hasher},
     marker::PhantomData,
     mem,
@@ -61,7 +60,6 @@ use effect_cache::{BufferState, CachedEffect, EffectSlice};
 use event::{CachedChildInfo, CachedEffectEvents, CachedParentInfo, CachedParentRef, GpuChildInfo};
 use fixedbitset::FixedBitSet;
 use gpu_buffer::GpuBuffer;
-use naga_oil::compose::{Composer, NagaModuleDescriptor};
 
 use crate::{
     asset::{DefaultMesh, EffectAsset},
@@ -499,16 +497,6 @@ struct GpuNonIndexedIndirectDrawCommand {
     instance_count: u32,
     vertex_offset: u32,
     base_instance: u32,
-}
-
-/// Single init fill dispatch item in an [`InitFillDispatchQueue`].
-#[derive(Debug)]
-pub(super) struct InitFillDispatchItem {
-    /// Index of the source [`GpuChildInfo`] entry to read the event count from.
-    pub global_child_index: u32,
-    /// Index of the [`GpuDispatchIndirect`] entry to write the workgroup count
-    /// to.
-    pub dispatch_indirect_index: u32,
 }
 
 /// Compute pipeline to run the `vfx_indirect` dispatch workgroup calculation
@@ -979,38 +967,6 @@ impl SpecializedComputePipeline for RenderBatchPipeline {
     }
 }
 
-/// Type of GPU buffer operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum GpuBufferOperationType {
-    /// Clear the destination buffer to zero.
-    ///
-    /// The source parameters [`src_offset`] and [`src_stride`] are ignored.
-    ///
-    /// [`src_offset`]: crate::GpuBufferOperationArgs::src_offset
-    /// [`src_stride`]: crate::GpuBufferOperationArgs::src_stride
-    #[allow(dead_code)]
-    Zero,
-    /// Copy a source buffer into a destination buffer.
-    ///
-    /// The source can have a stride between each `u32` copied. The destination
-    /// is always a contiguous buffer.
-    #[allow(dead_code)]
-    Copy,
-    /// Fill the arguments for a later indirect dispatch call.
-    ///
-    /// This is similar to a copy, but will round up the source value to the
-    /// number of threads per workgroup (64) before writing it into the
-    /// destination.
-    FillDispatchArgs,
-    /// Fill the arguments for a later indirect dispatch call.
-    ///
-    /// This is the same as [`FillDispatchArgs`], but the source element count
-    /// is read from the fourth entry in the destination buffer directly,
-    /// and the source buffer and source arguments are unused.
-    #[allow(dead_code)]
-    FillDispatchArgsSelf,
-}
-
 /// GPU representation of the arguments of a block operation on a buffer.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Pod, Zeroable, ShaderType)]
@@ -1036,90 +992,6 @@ struct QueuedOperationBindGroupKey {
     dst_binding_size: Option<NonZeroU32>,
 }
 
-#[derive(Debug, Clone)]
-struct QueuedOperation {
-    op: GpuBufferOperationType,
-    args_index: u32,
-    src_buffer: Buffer,
-    src_binding_offset: u32,
-    src_binding_size: Option<NonZeroU32>,
-    dst_buffer: Buffer,
-    dst_binding_offset: u32,
-    dst_binding_size: Option<NonZeroU32>,
-}
-
-impl From<&QueuedOperation> for QueuedOperationBindGroupKey {
-    fn from(value: &QueuedOperation) -> Self {
-        Self {
-            src_buffer: value.src_buffer.id(),
-            src_binding_size: value.src_binding_size,
-            dst_buffer: value.dst_buffer.id(),
-            dst_binding_size: value.dst_binding_size,
-        }
-    }
-}
-
-/// Queue of GPU buffer operations.
-///
-/// The queue records a series of ordered operations on GPU buffers. It can be
-/// submitted for this frame via [`GpuBufferOperations::submit()`], and
-/// subsequently dispatched as a compute pass via
-/// [`GpuBufferOperations::dispatch()`].
-pub struct GpuBufferOperationQueue {
-    /// Operation arguments.
-    args: Vec<GpuBufferOperationArgs>,
-    /// Queued operations.
-    operation_queue: Vec<QueuedOperation>,
-}
-
-impl GpuBufferOperationQueue {
-    /// Create a new empty queue.
-    pub fn new() -> Self {
-        Self {
-            args: vec![],
-            operation_queue: vec![],
-        }
-    }
-
-    /// Enqueue a generic operation.
-    pub fn enqueue(
-        &mut self,
-        op: GpuBufferOperationType,
-        args: GpuBufferOperationArgs,
-        src_buffer: Buffer,
-        src_binding_offset: u32,
-        src_binding_size: Option<NonZeroU32>,
-        dst_buffer: Buffer,
-        dst_binding_offset: u32,
-        dst_binding_size: Option<NonZeroU32>,
-    ) -> u32 {
-        trace!(
-            "Queue {:?} op: args={:?} src_buffer={:?} src_binding_offset={} src_binding_size={:?} dst_buffer={:?} dst_binding_offset={} dst_binding_size={:?}",
-            op,
-            args,
-            src_buffer,
-            src_binding_offset,
-            src_binding_size,
-            dst_buffer,
-            dst_binding_offset,
-            dst_binding_size,
-        );
-        let args_index = self.args.len() as u32;
-        self.args.push(args);
-        self.operation_queue.push(QueuedOperation {
-            op,
-            args_index,
-            src_buffer,
-            src_binding_offset,
-            src_binding_size,
-            dst_buffer,
-            dst_binding_offset,
-            dst_binding_size,
-        });
-        args_index
-    }
-}
-
 /// GPU buffer operations for this frame.
 ///
 /// This resource contains a list of submitted [`GpuBufferOperationQueue`] for
@@ -1132,9 +1004,6 @@ pub(super) struct GpuBufferOperations {
 
     /// Bind groups for the submitted operations.
     bind_groups: HashMap<QueuedOperationBindGroupKey, BindGroup>,
-
-    /// Submitted queues for this frame.
-    queues: Vec<Vec<QueuedOperation>>,
 }
 
 impl FromWorld for GpuBufferOperations {
@@ -1155,7 +1024,6 @@ impl GpuBufferOperations {
         Self {
             args_buffer,
             bind_groups: default(),
-            queues: vec![],
         }
     }
 
@@ -1163,441 +1031,6 @@ impl GpuBufferOperations {
     pub fn begin_frame(&mut self) {
         self.args_buffer.clear();
         self.bind_groups.clear(); // for now; might consider caching frame-to-frame
-        self.queues.clear();
-    }
-
-    /// Submit a recorded queue.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the queue submitted is empty.
-    pub fn submit(&mut self, mut queue: GpuBufferOperationQueue) -> u32 {
-        assert!(!queue.operation_queue.is_empty());
-        let queue_index = self.queues.len() as u32;
-        for qop in &mut queue.operation_queue {
-            qop.args_index = self.args_buffer.push(queue.args[qop.args_index as usize]) as u32;
-        }
-        self.queues.push(queue.operation_queue);
-        queue_index
-    }
-
-    /// Finish recording operations for this frame, and schedule buffer writes
-    /// to GPU.
-    pub fn end_frame(&mut self, device: &RenderDevice, render_queue: &RenderQueue) {
-        assert_eq!(
-            self.args_buffer.len(),
-            self.queues.iter().fold(0, |len, q| len + q.len())
-        );
-
-        // Upload to GPU buffer
-        self.args_buffer.write_buffer(device, render_queue);
-    }
-
-    /// Create all necessary bind groups for all queued operations.
-    pub fn create_bind_groups(
-        &mut self,
-        render_device: &RenderDevice,
-        utils_pipeline: &UtilsPipeline,
-    ) {
-        trace!(
-            "Creating bind groups for {} operation queues...",
-            self.queues.len()
-        );
-        for queue in &self.queues {
-            for qop in queue {
-                let key: QueuedOperationBindGroupKey = qop.into();
-                self.bind_groups.entry(key).or_insert_with(|| {
-                    let src_id: NonZeroU32 = qop.src_buffer.id().into();
-                    let dst_id: NonZeroU32 = qop.dst_buffer.id().into();
-                    let label = format!("hanabi:bind_group:util_{}_{}", src_id.get(), dst_id.get());
-                    let use_dynamic_offset = matches!(qop.op, GpuBufferOperationType::FillDispatchArgs);
-                    let bind_group_layout =
-                        utils_pipeline.bind_group_layout(qop.op, use_dynamic_offset);
-                    let (src_offset, dst_offset) = if use_dynamic_offset {
-                        (0, 0)
-                    } else {
-                        (qop.src_binding_offset as u64, qop.dst_binding_offset as u64)
-                    };
-                    trace!(
-                        "-> Creating new bind group '{}': src#{} (@+{}B:{:?}B) dst#{} (@+{}B:{:?}B)",
-                        label,
-                        src_id,
-                        src_offset,
-                        qop.src_binding_size,
-                        dst_id,
-                        dst_offset,
-                        qop.dst_binding_size,
-                    );
-                    render_device.create_bind_group(
-                        Some(&label[..]),
-                        bind_group_layout,
-                        &[
-                            BindGroupEntry {
-                                binding: 0,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: self.args_buffer.buffer().unwrap(),
-                                    offset: 0,
-                                    // We always bind exactly 1 row of arguments
-                                    size: Some(
-                                        NonZeroU64::new(self.args_buffer.aligned_size() as u64)
-                                            .unwrap(),
-                                    ),
-                                }),
-                            },
-                            BindGroupEntry {
-                                binding: 1,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: &qop.src_buffer,
-                                    offset: src_offset,
-                                    size: qop.src_binding_size.map(Into::into),
-                                }),
-                            },
-                            BindGroupEntry {
-                                binding: 2,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: &qop.dst_buffer,
-                                    offset: dst_offset,
-                                    size: qop.dst_binding_size.map(Into::into),
-                                }),
-                            },
-                        ],
-                    )
-                });
-            }
-        }
-    }
-
-    /// Dispatch a submitted queue by index.
-    ///
-    /// This creates a new, optionally labelled, compute pass, and records to
-    /// the render context a series of compute workgroup dispatch, one for each
-    /// enqueued operation.
-    ///
-    /// The compute pipeline(s) used for each operation are fetched from the
-    /// [`UtilsPipeline`], and the associated bind groups are used from a
-    /// previous call to [`Self::create_bind_groups()`].
-    pub fn dispatch(
-        &self,
-        index: u32,
-        render_context: &mut RenderContext,
-        utils_pipeline: &UtilsPipeline,
-        compute_pass_label: Option<&str>,
-    ) {
-        let queue = &self.queues[index as usize];
-        trace!(
-            "Recording GPU commands for queue #{} ({} ops)...",
-            index,
-            queue.len(),
-        );
-
-        if queue.is_empty() {
-            return;
-        }
-
-        let mut compute_pass =
-            render_context
-                .command_encoder()
-                .begin_compute_pass(&ComputePassDescriptor {
-                    label: compute_pass_label,
-                    timestamp_writes: None,
-                });
-
-        let mut prev_op = None;
-        for qop in queue {
-            trace!("qop={:?}", qop);
-
-            if Some(qop.op) != prev_op {
-                compute_pass.set_pipeline(utils_pipeline.get_pipeline(qop.op));
-                prev_op = Some(qop.op);
-            }
-
-            let key: QueuedOperationBindGroupKey = qop.into();
-            if let Some(bind_group) = self.bind_groups.get(&key) {
-                let args_offset = self.args_buffer.dynamic_offset(qop.args_index as usize);
-                let use_dynamic_offset = matches!(qop.op, GpuBufferOperationType::FillDispatchArgs);
-                let (src_offset, dst_offset) = if use_dynamic_offset {
-                    (qop.src_binding_offset, qop.dst_binding_offset)
-                } else {
-                    (0, 0)
-                };
-                compute_pass.set_bind_group(0, bind_group, &[args_offset, src_offset, dst_offset]);
-                trace!(
-                    "set bind group with args_offset=+{}B src_offset=+{}B dst_offset=+{}B",
-                    args_offset,
-                    src_offset,
-                    dst_offset
-                );
-            } else {
-                error!("GPU fill dispatch buffer operation bind group not found for buffers src#{:?} dst#{:?}", qop.src_buffer.id(), qop.dst_buffer.id());
-                continue;
-            }
-
-            // Dispatch the operations for this buffer
-            const WORKGROUP_SIZE: u32 = 64;
-            let num_ops = 1u32; // TODO - batching!
-            let workgroup_count = num_ops.div_ceil(WORKGROUP_SIZE);
-            compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
-            trace!(
-                "-> fill dispatch compute dispatched: num_ops={} workgroup_count={}",
-                num_ops,
-                workgroup_count
-            );
-        }
-    }
-}
-
-/// Compute pipeline to run the `vfx_utils` shader.
-#[derive(Resource)]
-pub(crate) struct UtilsPipeline {
-    #[allow(dead_code)]
-    bind_group_layout: BindGroupLayout,
-    bind_group_layout_dyn: BindGroupLayout,
-    bind_group_layout_no_src: BindGroupLayout,
-    pipelines: [ComputePipeline; 4],
-}
-
-impl FromWorld for UtilsPipeline {
-    fn from_world(world: &mut World) -> Self {
-        let render_device = world.get_resource::<RenderDevice>().unwrap();
-
-        let bind_group_layout = render_device.create_bind_group_layout(
-            "hanabi:bind_group_layout:utils",
-            &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(GpuBufferOperationArgs::min_size()),
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(4),
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(4),
-                    },
-                    count: None,
-                },
-            ],
-        );
-
-        let pipeline_layout = render_device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("hanabi:pipeline_layout:utils"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let bind_group_layout_dyn = render_device.create_bind_group_layout(
-            "hanabi:bind_group_layout:utils_dyn",
-            &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: Some(GpuBufferOperationArgs::min_size()),
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: true,
-                        min_binding_size: NonZeroU64::new(4),
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: true,
-                        min_binding_size: NonZeroU64::new(4),
-                    },
-                    count: None,
-                },
-            ],
-        );
-
-        let pipeline_layout_dyn = render_device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("hanabi:pipeline_layout:utils_dyn"),
-            bind_group_layouts: &[&bind_group_layout_dyn],
-            push_constant_ranges: &[],
-        });
-
-        let bind_group_layout_no_src = render_device.create_bind_group_layout(
-            "hanabi:bind_group_layout:utils_no_src",
-            &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(GpuBufferOperationArgs::min_size()),
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(4),
-                    },
-                    count: None,
-                },
-            ],
-        );
-
-        let pipeline_layout_no_src =
-            render_device.create_pipeline_layout(&PipelineLayoutDescriptor {
-                label: Some("hanabi:pipeline_layout:utils_no_src"),
-                bind_group_layouts: &[&bind_group_layout_no_src],
-                push_constant_ranges: &[],
-            });
-
-        let shader_code = include_str!("vfx_utils.wgsl");
-
-        // Resolve imports. Because we don't insert this shader into Bevy' pipeline
-        // cache, we don't get that part "for free", so we have to do it manually here.
-        let shader_source = {
-            let mut composer = Composer::default();
-
-            let shader_defs = default();
-
-            match composer.make_naga_module(NagaModuleDescriptor {
-                source: shader_code,
-                file_path: "vfx_utils.wgsl",
-                shader_defs,
-                ..Default::default()
-            }) {
-                Ok(naga_module) => ShaderSource::Naga(Cow::Owned(naga_module)),
-                Err(compose_error) => panic!(
-                    "Failed to compose vfx_utils.wgsl, naga_oil returned: {}",
-                    compose_error.emit_to_string(&composer)
-                ),
-            }
-        };
-
-        debug!("Create utils shader module:\n{}", shader_code);
-        #[allow(unsafe_code)]
-        let shader_module = unsafe {
-            render_device.create_shader_module(ShaderModuleDescriptor {
-                label: Some("hanabi:shader:utils"),
-                source: shader_source,
-            })
-        };
-
-        trace!("Create vfx_utils pipelines...");
-        let dummy = std::collections::HashMap::<String, f64>::new();
-        let zero_pipeline = render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
-            label: Some("hanabi:compute_pipeline:zero_buffer"),
-            layout: Some(&pipeline_layout),
-            module: &shader_module,
-            entry_point: Some("zero_buffer"),
-            compilation_options: PipelineCompilationOptions {
-                constants: &dummy,
-                zero_initialize_workgroup_memory: false,
-            },
-            cache: None,
-        });
-        let copy_pipeline = render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
-            label: Some("hanabi:compute_pipeline:copy_buffer"),
-            layout: Some(&pipeline_layout_dyn),
-            module: &shader_module,
-            entry_point: Some("copy_buffer"),
-            compilation_options: PipelineCompilationOptions {
-                constants: &dummy,
-                zero_initialize_workgroup_memory: false,
-            },
-            cache: None,
-        });
-        let fill_dispatch_args_pipeline =
-            render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
-                label: Some("hanabi:compute_pipeline:fill_dispatch_args"),
-                layout: Some(&pipeline_layout_dyn),
-                module: &shader_module,
-                entry_point: Some("fill_dispatch_args"),
-                compilation_options: PipelineCompilationOptions {
-                    constants: &dummy,
-                    zero_initialize_workgroup_memory: false,
-                },
-                cache: None,
-            });
-        let fill_dispatch_args_self_pipeline =
-            render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
-                label: Some("hanabi:compute_pipeline:fill_dispatch_args_self"),
-                layout: Some(&pipeline_layout_no_src),
-                module: &shader_module,
-                entry_point: Some("fill_dispatch_args_self"),
-                compilation_options: PipelineCompilationOptions {
-                    constants: &dummy,
-                    zero_initialize_workgroup_memory: false,
-                },
-                cache: None,
-            });
-
-        Self {
-            bind_group_layout,
-            bind_group_layout_dyn,
-            bind_group_layout_no_src,
-            pipelines: [
-                zero_pipeline,
-                copy_pipeline,
-                fill_dispatch_args_pipeline,
-                fill_dispatch_args_self_pipeline,
-            ],
-        }
-    }
-}
-
-impl UtilsPipeline {
-    fn get_pipeline(&self, op: GpuBufferOperationType) -> &ComputePipeline {
-        match op {
-            GpuBufferOperationType::Zero => &self.pipelines[0],
-            GpuBufferOperationType::Copy => &self.pipelines[1],
-            GpuBufferOperationType::FillDispatchArgs => &self.pipelines[2],
-            GpuBufferOperationType::FillDispatchArgsSelf => &self.pipelines[3],
-        }
-    }
-
-    fn bind_group_layout(
-        &self,
-        op: GpuBufferOperationType,
-        with_dynamic_offsets: bool,
-    ) -> &BindGroupLayout {
-        if op == GpuBufferOperationType::FillDispatchArgsSelf {
-            assert!(
-                !with_dynamic_offsets,
-                "FillDispatchArgsSelf op cannot use dynamic offset (not implemented)"
-            );
-            &self.bind_group_layout_no_src
-        } else if with_dynamic_offsets {
-            &self.bind_group_layout_dyn
-        } else {
-            &self.bind_group_layout
-        }
     }
 }
 
@@ -4629,8 +4062,7 @@ pub(crate) fn batch_effects(
     effect_sorter.sort();
 
     // Loop on all extracted effects in the order we determined above, and try
-    // to batch them together to reduce draw calls. -- currently does nothing,
-    // batching was broken and never fixed.
+    // to batch them together to reduce draw calls.
     trace!("Batching {} effects...", q_cached_effects.iter().len());
 
     sorted_effect_batches.clear();
@@ -4685,7 +4117,6 @@ pub(crate) fn batch_effects(
                 buffer_index: cp.buffer_index,
                 binding_size: cp.binding_size,
             }),
-            cached_properties.map(|cp| cp.offset),
             *main_entity,
         );
 
@@ -6367,19 +5798,16 @@ pub(crate) fn prepare_bind_groups(
         init_indirect_batch_pipeline,
         indirect_batch_pipeline,
         render_batch_pipeline,
-        utils_pipeline,
         update_pipeline,
     ): (
         Res<DispatchIndirectPipeline>,
         Res<InitIndirectBatchPipeline>,
         Res<IndirectBatchPipeline>,
         Res<RenderBatchPipeline>,
-        Res<UtilsPipeline>,
         Res<ParticlesUpdatePipeline>,
     ),
     render_pipeline: ResMut<ParticlesRenderPipeline>,
     gpu_images: Res<RenderAssets<GpuImage>>,
-    mut gpu_buffer_operation_queue: ResMut<GpuBufferOperations>,
 ) {
     // We can't simulate nor render anything without at least the spawner buffer
     if effects_meta.spawner_buffer.is_empty() {
@@ -6748,9 +6176,6 @@ pub(crate) fn prepare_bind_groups(
                 BufferBindGroups { render }
             });
     }
-
-    // Create bind groups for queued GPU buffer operations
-    gpu_buffer_operation_queue.create_bind_groups(&render_device, &utils_pipeline);
 
     // Create the per-effect bind groups
     for effect_batch in sorted_effect_batched.iter() {
@@ -7495,10 +6920,8 @@ impl Node for VfxSimulateNode {
         let effect_bind_groups = world.resource::<EffectBindGroups>();
         let property_bind_groups = world.resource::<PropertyBindGroups>();
         let sort_bind_groups = world.resource::<SortBindGroups>();
-        let utils_pipeline = world.resource::<UtilsPipeline>();
         let effect_cache = world.resource::<EffectCache>();
         let event_cache = world.resource::<EventCache>();
-        let gpu_buffer_operations = world.resource::<GpuBufferOperations>();
         let sorted_effect_batches = world.resource::<SortedEffectBatches>();
         let render_device = world.resource::<RenderDevice>();
 
@@ -7867,7 +7290,6 @@ impl Node for VfxSimulateNode {
                 let spawner_index = representative_effect_batch.spawner_base;
                 let spawner_aligned_size = effects_meta.spawner_buffer.aligned_size();
                 assert!(spawner_aligned_size >= GpuSpawnerParams::min_size().get() as usize);
-                let property_offset = representative_effect_batch.property_offset;
 
                 trace!(
                     "record commands for update pipeline of effect {:?} spawner_base={}",

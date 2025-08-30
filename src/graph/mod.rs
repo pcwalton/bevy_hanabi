@@ -486,7 +486,7 @@ impl VectorValue {
     }
 
     /// Workaround for `impl const From<Vec2>`.
-    #[allow(unsafe_code, clippy::transmute_float_to_int)] // to_bits() can't be const
+    #[allow(unsafe_code, unnecessary_transmutes)] // to_bits() can't be const
     pub const fn new_vec2(value: Vec2) -> Self {
         Self {
             vector_type: VectorType::VEC2F,
@@ -500,7 +500,7 @@ impl VectorValue {
     }
 
     /// Workaround for `impl const From<Vec3>`.
-    #[allow(unsafe_code, clippy::transmute_float_to_int)] // to_bits() can't be const
+    #[allow(unsafe_code, unnecessary_transmutes)] // to_bits() can't be const
     pub const fn new_vec3(value: Vec3) -> Self {
         Self {
             vector_type: VectorType::VEC3F,
@@ -523,7 +523,7 @@ impl VectorValue {
     }
 
     /// Workaround for `impl const From<IVec2>`.
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, unnecessary_transmutes)]
     pub const fn new_ivec2(value: IVec2) -> Self {
         Self {
             vector_type: VectorType::VEC2I,
@@ -537,7 +537,7 @@ impl VectorValue {
     }
 
     /// Workaround for `impl const From<IVec3>`.
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, unnecessary_transmutes)]
     pub const fn new_ivec3(value: IVec3) -> Self {
         Self {
             vector_type: VectorType::VEC3I,
@@ -2038,7 +2038,7 @@ mod tests {
         assert_eq!(v.z.to_bits(), vv.storage[2]);
         assert_eq!(v.w.to_bits(), vv.storage[3]);
 
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unnecessary_transmutes)]
         {
             let v = IVec2::new(-3, 5);
             let vv = VectorValue::new_ivec2(v);

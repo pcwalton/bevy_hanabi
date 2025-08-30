@@ -97,43 +97,6 @@ impl<T: Pod + ShaderType + ShaderSize> GpuBuffer<T> {
         }
     }
 
-    /// Create a new collection from an allocated buffer.
-    ///
-    /// The buffer usage must contain [`BufferUsages::COPY_SRC`] and
-    /// [`BufferUsages::COPY_DST`] in order to allow buffer-to-buffer copy when
-    /// reallocating, to preserve old content.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `buffer_usage` doesn't contain [`BufferUsages::COPY_SRC`] or
-    /// [`BufferUsages::COPY_DST`].
-    ///
-    /// Panics if `buffer_usage` contains [`BufferUsages::UNIFORM`] and the
-    /// layout of the element type `T` does not meet the requirements of the
-    /// uniform address space, as tested by
-    /// [`ShaderType::assert_uniform_compat()`].
-    ///
-    /// [`BufferUsages::UNIFORM`]: bevy::render::render_resource::BufferUsages::UNIFORM
-    pub fn new_allocated(buffer: Buffer, size: u32, label: Option<String>) -> Self {
-        // GPU-aligned item size, compatible with WGSL rules
-        let item_size = <T as ShaderSize>::SHADER_SIZE.get() as u32;
-        let buffer_usage = buffer.usage();
-        assert!(
-            buffer_usage.contains(BufferUsages::COPY_SRC | BufferUsages::COPY_DST),
-            "GpuBuffer requires COPY_SRC and COPY_DST buffer usages to allow copy on reallocation."
-        );
-        if buffer_usage.contains(BufferUsages::UNIFORM) {
-            <T as ShaderType>::assert_uniform_compat();
-        }
-        trace!("GpuBuffer: item_size={}", item_size);
-        Self {
-            buffer: Some(BufferAndSize { buffer, size }),
-            buffer_usage,
-            label,
-            ..Default::default()
-        }
-    }
-
     /// Clear the buffer.
     ///
     /// This doesn't de-allocate any GPU buffer.

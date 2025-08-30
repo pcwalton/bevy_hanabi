@@ -31,7 +31,7 @@ pub fn close_on_esc(mut ev_app_exit: EventWriter<AppExit>, input: Res<ButtonInpu
 pub fn get_log_filters(example_name: &str) -> String {
     [
         // The example app itself is at trace level so we can see everything
-        &format!("{}=trace", example_name),
+        &format!("{example_name}=trace"),
         // Default Hanabi to warn, probably don't need more
         "bevy_hanabi=warn",
         // Prevent HAL from dumping all naga-generated shader code in logs

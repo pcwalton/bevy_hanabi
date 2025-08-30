@@ -64,10 +64,6 @@ pub(crate) struct EffectBatch {
     pub child_event_buffers: Vec<(Entity, BufferBindingSource)>,
     /// Index of the property buffer, if any.
     pub property_key: Option<PropertyBindGroupKey>,
-    /// Offset in bytes into the property buffer where the Property struct is
-    /// located for this effect.
-    // FIXME: This is a per-instance value which prevents batching :(
-    pub property_offset: Option<u32>,
     /// Index of the first [`GpuSpawnerParams`] entry of the effects in the
     /// batch. Subsequent batched effects have their entries following linearly
     /// after that one.
@@ -333,11 +329,8 @@ impl EffectBatch {
         input: &mut BatchInput,
         dispatch_buffer_indices: DispatchBufferIndices,
         property_key: Option<PropertyBindGroupKey>,
-        property_offset: Option<u32>,
         main_entity: MainEntity,
     ) -> EffectBatch {
-        assert_eq!(property_key.is_some(), property_offset.is_some());
-
         let spawn_info = if let Some(event_buffer_index) = input.event_buffer_index {
             BatchSpawnInfo::GpuSpawner { event_buffer_index }
         } else {
@@ -359,7 +352,6 @@ impl EffectBatch {
                 .map(|cci| cci.parent_buffer_binding_source.clone()),
             child_event_buffers: input.child_effects.clone(),
             property_key,
-            property_offset,
             spawner_base: input.spawner_index,
             particle_layout: input.effect_slice.particle_layout.clone(),
             dispatch_buffer_indices,
