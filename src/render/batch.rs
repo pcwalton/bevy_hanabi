@@ -335,7 +335,7 @@ impl EffectInstance {
         cached_effect_events: Option<&CachedEffectEvents>,
         cached_child_info: Option<&CachedChildInfo>,
         cached_mesh_location: Option<&CachedMeshLocation>,
-        input: &mut BatchInput,
+        input: &mut InstanceInput,
         dispatch_buffer_indices: DispatchBufferIndices,
         property_key: Option<PropertyBindGroupKey>,
         main_entity: MainEntity,
@@ -380,7 +380,7 @@ impl EffectInstance {
 
 /// Effect batching input, obtained from extracted effects.
 #[derive(Debug, Component)]
-pub(crate) struct BatchInput {
+pub(crate) struct InstanceInput {
     /// Handle of the underlying effect asset describing the effect.
     pub handle: Handle<EffectAsset>,
     /// Main entity of the [`ParticleEffect`], used for visibility.

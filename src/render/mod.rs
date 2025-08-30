@@ -66,7 +66,7 @@ use crate::{
     calc_func_id,
     render::{
         batch::{
-            BatchInput, EffectBatchKey, EffectDrawBatch, EffectInstanceIndex, EffectSorter,
+            InstanceInput, EffectBatchKey, EffectDrawBatch, EffectInstanceIndex, EffectSorter,
             EffectToBeSorted, InitAndUpdatePipelineIds,
         },
         effect_cache::DispatchBufferIndices,
@@ -3271,11 +3271,11 @@ pub fn update_mesh_locations(
 // reuse by mistake the previous frame's extraction.
 pub fn clear_transient_batch_inputs(
     mut commands: Commands,
-    mut q_cached_effects: Query<Entity, With<BatchInput>>,
+    mut q_cached_effects: Query<Entity, With<InstanceInput>>,
 ) {
     for entity in &mut q_cached_effects {
         if let Ok(mut cmd) = commands.get_entity(entity) {
-            cmd.remove::<BatchInput>();
+            cmd.remove::<InstanceInput>();
         }
     }
 }
@@ -3768,7 +3768,7 @@ pub(crate) fn prepare_effects(
             extracted_effect.render_entity.id()
         );
         let mut cmd = commands.entity(extracted_effect.render_entity.id());
-        cmd.insert(BatchInput {
+        cmd.insert(InstanceInput {
             handle: extracted_effect.handle,
             entity: extracted_effect.render_entity.id(),
             main_entity: extracted_effect.main_entity,
@@ -4022,7 +4022,7 @@ pub(crate) fn batch_effects(
         Option<&CachedChildInfo>,
         Option<&CachedProperties>,
         &mut DispatchBufferIndices,
-        &mut BatchInput,
+        &mut InstanceInput,
     )>,
     sorted_effect_batches: ResMut<SortedEffects>,
     mut event_cache: ResMut<EventCache>,
