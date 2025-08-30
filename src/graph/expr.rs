@@ -1319,7 +1319,10 @@ impl PropertyExpr {
             )));
         }
 
-        Ok(format!("properties.{}", prop.name()))
+        Ok(format!(
+            "properties[effect_metadata[effect_metadata_index].properties_index].{}",
+            prop.name()
+        ))
     }
 }
 

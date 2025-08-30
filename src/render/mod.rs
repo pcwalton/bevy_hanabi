@@ -423,6 +423,7 @@ pub struct GpuEffectMetadata {
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     pub indirect_render_index: u32,
     pub sort_metadata_index: u32,
+    pub properties_index: u32,
     /// Index of this effect into its parent's ChildInfo array
     /// ([`EffectChildren::effect_cache_ids`] and its associated GPU
     /// array). This starts at zero for the first child of each effect, and is
@@ -4465,6 +4466,11 @@ pub(crate) fn prepare_effects(
             None => !0,
         };
 
+        let properties_index = match cached_effect_properties {
+            Some(cached_effect_properties) => cached_effect_properties.range.start,
+            None => !0,
+        };
+
         let gpu_effect_metadata = GpuEffectMetadata {
             vertex_or_index_count: cached_mesh_location.vertex_or_index_count,
             instance_count: 0,
@@ -4486,6 +4492,7 @@ pub(crate) fn prepare_effects(
             // Note: the indirect draw args are at the start of the GpuEffectMetadata struct
             indirect_render_index: dispatch_buffer_indices.effect_metadata_buffer_table_id.0,
             sort_metadata_index,
+            properties_index,
             local_child_index,
             global_child_index,
             base_child_index,
@@ -7875,17 +7882,12 @@ impl Node for VfxSimulateNode {
 
                 // Setup update pass
                 compute_pass.set_bind_group(1, particle_bind_group, &[]);
-                let offsets = if let Some(property_offset) = property_offset {
-                    vec![property_offset]
-                } else {
-                    vec![]
-                };
                 compute_pass.set_bind_group(
                     2,
                     property_bind_groups
                         .get(representative_effect_batch.property_key.as_ref())
                         .unwrap(),
-                    &offsets[..],
+                    &[],
                 );
                 let batch_descriptor_offset =
                     render_batch.batch_descriptor_index * batch_descriptor_size;
@@ -8239,22 +8241,15 @@ fn prepare_to_dispatch_init_job(
     // Compute dynamic offsets
     let spawner_aligned_size = effects_meta.spawner_buffer.aligned_size();
     debug_assert!(spawner_aligned_size >= GpuSpawnerParams::min_size().get() as usize);
-    let property_offset = effect_batch.property_offset;
 
     // Setup init pass
     compute_pass.set_bind_group(1, particle_bind_group, &[]);
-    // TODO: Batch these too!
-    let offsets = if let Some(property_offset) = property_offset {
-        vec![property_offset]
-    } else {
-        vec![]
-    };
     compute_pass.set_bind_group(
         2,
         property_bind_groups
             .get(effect_batch.property_key.as_ref())
             .unwrap(),
-        &offsets[..],
+        &[],
     );
 
     let batch_descriptor_offset = batch_descriptor_index * batch_descriptor_size;

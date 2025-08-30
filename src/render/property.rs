@@ -236,13 +236,13 @@ impl PropertyCache {
                             },
                             count: None,
                         },
-                        // @group(2) @binding(1) var<storage, read> properties : Properties;
+                        // @group(2) @binding(1) var<storage, read> properties : array<Properties>;
                         BindGroupLayoutEntry {
                             binding: 1,
                             visibility: ShaderStages::COMPUTE,
                             ty: BindingType::Buffer {
                                 ty: BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: true,
+                                has_dynamic_offset: false,
                                 min_binding_size: Some(properties_min_binding_size),
                             },
                             count: None,

@@ -59,7 +59,7 @@ impl SetPositionCircleModifier {
 
         context.make_fn(
             &func_name,
-            "particle: ptr<function, Particle>",
+            "particle: ptr<function, Particle>, effect_metadata_index: u32",
             module,
             &mut |m: &mut Module, ctx: &mut dyn EvalContext| -> Result<String, ExprError> {
                 let center = ctx.eval(m, self.center)?;
@@ -102,7 +102,7 @@ impl SetPositionCircleModifier {
             },
         )?;
 
-        let code = format!("{}(&particle);\n", func_name);
+        let code = format!("{}(&particle, effect_metadata_index);\n", func_name);
 
         Ok(code)
     }
@@ -160,7 +160,7 @@ impl SetPositionSphereModifier {
 
         context.make_fn(
             &func_name,
-            "particle: ptr<function, Particle>",
+            "particle: ptr<function, Particle>, effect_metadata_index: u32",
             module,
             &mut |m: &mut Module, ctx: &mut dyn EvalContext| -> Result<String, ExprError> {
                 let center = ctx.eval(m, self.center)?;
@@ -205,7 +205,7 @@ impl SetPositionSphereModifier {
             },
         )?;
 
-        let code = format!("{}(&particle);\n", func_name);
+        let code = format!("{}(&particle, effect_metadata_index);\n", func_name);
 
         Ok(code)
     }
@@ -276,7 +276,7 @@ impl SetPositionCone3dModifier {
 
         context.make_fn(
             &func_name,
-            "transform: mat4x4<f32>, particle: ptr<function, Particle>",
+            "transform: mat4x4<f32>, particle: ptr<function, Particle>, effect_metadata_index: u32",
             module,
             &mut |m: &mut Module, ctx: &mut dyn EvalContext| -> Result<String, ExprError> {
                 let height = ctx.eval(m, self.height)?;
@@ -320,7 +320,7 @@ impl SetPositionCone3dModifier {
             },
         )?;
 
-        let code = format!("{}(transform, &particle);\n", func_name);
+        let code = format!("{}(transform, &particle, effect_metadata_index);\n", func_name);
 
         Ok(code)
     }

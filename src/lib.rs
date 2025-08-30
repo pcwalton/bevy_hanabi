@@ -936,7 +936,7 @@ impl EffectShaderSource {
         let properties_binding_code = if property_layout.is_empty() {
             "// (no properties)".to_string()
         } else {
-            "@group(2) @binding(1) var<storage, read> properties : Properties;".to_string()
+            "@group(2) @binding(1) var<storage, read> properties : array<Properties>;".to_string()
         };
 
         // Event buffer bindings for the update pass, if the effect emits GPU events to

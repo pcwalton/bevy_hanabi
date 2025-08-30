@@ -167,7 +167,10 @@ impl Property {
 
 impl ToWgslString for Property {
     fn to_wgsl_string(&self) -> String {
-        format!("properties.{}", self.name)
+        format!(
+            "properties[effect_metadata[effect_metadata_index].properties_index].{}",
+            self.name
+        )
     }
 }
 

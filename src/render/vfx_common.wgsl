@@ -149,6 +149,7 @@ struct EffectMetadata {
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     indirect_render_index: u32,
     sort_metadata_index: u32,
+    properties_index: u32,
     /// Index of this effect into its parent's ChildInfo array
     /// ([`EffectChildren::effect_cache_ids`] and its associated GPU
     /// array). This starts at zero for the first child of each effect, and is
