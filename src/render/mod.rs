@@ -6960,6 +6960,38 @@ impl Node for VfxSimulateNode {
                     continue;
                 };
 
+                let spawn_count: Option<u32> = match representative_effect_batch.spawn_info {
+                    BatchSpawnInfo::CpuSpawner { .. } => Some(
+                        render_batch
+                            .effect_instance_indices
+                            .iter()
+                            .map(|&effect_batch_index| {
+                                match sorted_effect_batches.instances[effect_batch_index.0 as usize]
+                                    .spawn_info
+                                {
+                                    BatchSpawnInfo::CpuSpawner { total_spawn_count } => {
+                                        total_spawn_count
+                                    }
+                                    BatchSpawnInfo::GpuSpawner { .. } => {
+                                        error!(
+                                            "GPU spawner effect shouldn't be batched with a \
+                                             CPU spawner effect!"
+                                        );
+                                        0
+                                    }
+                                }
+                            })
+                            .sum(),
+                    ),
+                    BatchSpawnInfo::GpuSpawner { .. } => None,
+                };
+
+                // Bail out early if this effect batch is CPU spawning and we
+                // have no work to do.
+                if spawn_count == Some(0) {
+                    continue;
+                }
+
                 if !prepare_to_dispatch_init_job(
                     representative_effect_batch,
                     render_batch.batch_descriptor_index,
@@ -6977,24 +7009,14 @@ impl Node for VfxSimulateNode {
                 let spawner_base = representative_effect_batch.spawner_base;
 
                 // Dispatch init job
-                match representative_effect_batch.spawn_info {
+                match spawn_count {
                     // Direct dispatch via CPU spawn count
-                    BatchSpawnInfo::CpuSpawner { .. } => {
+                    Some(spawn_count) => {
                         assert!(!representative_effect_batch
                             .layout_flags
                             .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS));
 
                         const WORKGROUP_SIZE: u32 = 64;
-                        let spawn_count: u32 =
-                            render_batch.effect_instance_indices.iter().map(|&effect_batch_index| {
-                                match sorted_effect_batches.instances[effect_batch_index.0 as usize].spawn_info {
-                                    BatchSpawnInfo::CpuSpawner { total_spawn_count } => total_spawn_count,
-                                    BatchSpawnInfo::GpuSpawner { .. } => {
-                                        error!("GPU spawner effect shouldn't be batched with a CPU spawner effect!");
-                                        0
-                                    }
-                                }
-                            }).sum();
                         let workgroup_count = spawn_count.div_ceil(WORKGROUP_SIZE);
 
                         trace!(
@@ -7011,7 +7033,7 @@ impl Node for VfxSimulateNode {
                         compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
                     }
 
-                    BatchSpawnInfo::GpuSpawner { .. } => {
+                    None => {
                         assert!(representative_effect_batch
                             .layout_flags
                             .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS));
@@ -7559,24 +7581,15 @@ fn prepare_to_dispatch_init_job(
     effects_meta: &EffectsMeta,
     batch_descriptor_size: u32,
 ) -> bool {
-    // Do not dispatch any init work if there's nothing to spawn this frame for the
-    // batch. Note that this hopefully should have been skipped earlier.
-    {
-        let use_indirect_dispatch = representative_effect_instance
-            .layout_flags
-            .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS);
-        match representative_effect_instance.spawn_info {
-            BatchSpawnInfo::CpuSpawner { total_spawn_count } => {
-                assert!(!use_indirect_dispatch);
-                if total_spawn_count == 0 {
-                    return false;
-                }
-            }
-            BatchSpawnInfo::GpuSpawner { .. } => {
-                assert!(use_indirect_dispatch);
-            }
-        }
-    }
+    let use_indirect_dispatch = representative_effect_instance
+        .layout_flags
+        .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS);
+    debug_assert!(
+        matches!(
+            representative_effect_instance.spawn_info,
+            BatchSpawnInfo::GpuSpawner { .. }
+        ) == use_indirect_dispatch
+    );
 
     // Fetch bind group particle@1
     let Some(particle_bind_group) =
