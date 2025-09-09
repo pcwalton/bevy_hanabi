@@ -67,11 +67,13 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     var spawner_index = 0u;
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
     var event_index = thread_index;
+    var event_offset = 0u;
     while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
         effect_metadata_index = batch_effect_indices[effect_index_offset].effect_metadata_index;
         spawner_index = batch_effect_indices[effect_index_offset].spawner_index;
         let global_child_index = effect_metadata[effect_metadata_index].global_child_index;
         let this_event_count = u32(child_info_buffer.rows[global_child_index].event_count);
+        event_offset = child_info_buffer.rows[global_child_index].spawn_event_offset;
         if (event_index < this_event_count) {
             break;
         }
@@ -81,7 +83,10 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     if (effect_index_offset == batch_descriptor.last_batch_effect_index_offset) {
         return;
     }
+    // Do this before adjusting the event index so that the dead particle cap
+    // check below looks at the local event index, not the global event index.
     let indirect_particle_index = event_index;
+    event_index += event_offset;
 #else
     // Step through render batch descriptors. Cap to the actual amount of
     // spawning requested by CPU.
