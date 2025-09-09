@@ -1,5 +1,5 @@
 #import bevy_hanabi::vfx_common::{
-    BatchDescriptor, BatchMetadata, ChildInfo, ChildInfoBuffer, EventBuffer,
+    BatchDescriptor, BatchEffectIndices, BatchMetadata, ChildInfo, ChildInfoBuffer, EventBuffer,
     IndirectDispatch, IndirectBuffer, EffectMetadata, RenderGroupIndirect,
     SimParams, Spawner, seed, tau, pcg_hash, to_float01, frand, frand2, frand3,
     frand4, rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3,
@@ -43,9 +43,8 @@ struct ParentParticleBuffer {
 {{PROPERTIES_BINDING}}
 
 // "metadata" group @3
-//@group(3) @binding(0) var<storage, read_write> effect_metadata : EffectMetadata;
 @group(3) @binding(0) var<storage, read> batch_descriptor : BatchDescriptor;
-@group(3) @binding(1) var<storage, read> batch_effect_indices : array<u32>;
+@group(3) @binding(1) var<storage, read> batch_effect_indices : array<BatchEffectIndices>;
 @group(3) @binding(2) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 #ifdef EMITS_GPU_SPAWN_EVENTS
 {{EMIT_EVENT_BUFFER_BINDINGS}}
@@ -65,10 +64,12 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // TODO: This should be a prefix sum and binary search or something instead
     // of linear search.
     var effect_metadata_index = 0u;
+    var spawner_index = 0u;
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
     var indirect_particle_index = thread_index;
     while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
-        effect_metadata_index = batch_effect_indices[effect_index_offset];
+        effect_metadata_index = batch_effect_indices[effect_index_offset].effect_metadata_index;
+        spawner_index = batch_effect_indices[effect_index_offset].spawner_index;
         let this_max_update = u32(effect_metadata[effect_metadata_index].max_update);
         if (indirect_particle_index < this_max_update) {
             break;
@@ -89,7 +90,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     ];
 
     // Initialize the PRNG seed
-    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
     seed = pcg_hash(particle_index ^ spawners[spawner_index].seed);
 
     var particle: Particle = particle_buffer.particles[particle_index];

@@ -70,6 +70,7 @@ use crate::{
             InitAndUpdatePipelineIds, InstanceInput,
         },
         effect_cache::DispatchBufferIndices,
+        event::GpuBatchEffectIndices,
     },
     AlphaMode, Attribute, CompiledParticleEffect, EffectProperties, EffectShader, EffectSimulation,
     EffectSpawner, EffectVisibilityClass, ParticleLayout, PropertyLayout, SimulationCondition,
@@ -447,9 +448,6 @@ pub struct GpuEffectMetadata {
     /// forever there's little chance of repetition.
     pub particle_counter: u32,
 
-    /// Index of the spawner associated with this effect in the spawner buffer.
-    pub spawner_index: u32,
-
     pub mesh_is_indexed: u32,
 }
 
@@ -735,14 +733,14 @@ impl FromWorld for IndirectBatchPipeline {
                 count: None,
             },
             // @group(0) @binding(2) var<storage, read> batch_effect_indices :
-            // array<u32>;
+            // array<BatchEffectIndices>;
             BindGroupLayoutEntry {
                 binding: 2,
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(u32::min_size()),
+                    min_binding_size: Some(GpuBatchEffectIndices::min_size()),
                 },
                 count: None,
             },
@@ -843,14 +841,14 @@ impl FromWorld for InitIndirectBatchPipeline {
                 count: None,
             },
             // @group(0) @binding(3) var<storage, read> batch_effect_indices :
-            // array<u32>;
+            // array<BatchEffectIndices>;
             BindGroupLayoutEntry {
                 binding: 3,
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(u32::min_size()),
+                    min_binding_size: Some(GpuBatchEffectIndices::min_size()),
                 },
                 count: None,
             },
@@ -1372,14 +1370,14 @@ impl FromWorld for RenderBatchPipeline {
                 count: None,
             },
             // @group(0) @binding(2) var<storage, read> batch_effect_indices :
-            // array<u32>;
+            // array<BatchEffectIndices>;
             BindGroupLayoutEntry {
                 binding: 2,
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(u32::min_size()),
+                    min_binding_size: Some(GpuBatchEffectIndices::min_size()),
                 },
                 count: None,
             },
@@ -1566,14 +1564,15 @@ impl FromWorld for ParticlesRenderPipeline {
                     },
                     count: None,
                 },
-                // @group(2) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
+                // @group(2) @binding(2) var<storage, read> batch_effect_indices
+                // : array<BatchEffectIndices>;
                 BindGroupLayoutEntry {
                     binding: 2,
                     visibility: ShaderStages::VERTEX,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
-                        min_binding_size: Some(u32::min_size()),
+                        min_binding_size: Some(GpuBatchEffectIndices::min_size()),
                     },
                     count: None,
                 },
@@ -2402,7 +2401,7 @@ pub struct EffectsMeta {
     effect_sort_metadata_buffer: BufferTable<GpuEffectSortMetadata>,
     total_batch_count: u32,
     render_batch_metadata_buffer: UniformBuffer<GpuRenderBatchMetadata>,
-    batch_effect_index_buffer: RawBufferVec<u32>,
+    batch_effect_indices_buffer: RawBufferVec<GpuBatchEffectIndices>,
     batch_descriptor_buffer: AlignedBufferVec<GpuRenderBatchDescriptor>,
     batch_descriptors_requiring_sorting_buffer: RawBufferVec<u32>,
     batch_descriptors_with_events_buffer: RawBufferVec<u32>,
@@ -2479,7 +2478,7 @@ impl EffectsMeta {
             ),
             total_batch_count: 0,
             render_batch_metadata_buffer: UniformBuffer::default(),
-            batch_effect_index_buffer: RawBufferVec::new(BufferUsages::STORAGE),
+            batch_effect_indices_buffer: RawBufferVec::new(BufferUsages::STORAGE),
             batch_descriptor_buffer: AlignedBufferVec::new(
                 BufferUsages::STORAGE,
                 NonZeroU64::new(item_align),
@@ -3901,7 +3900,6 @@ pub(crate) fn prepare_effects(
             particle_stride,
             sort_key_offset,
             sort_key2_offset,
-            spawner_index,
             ..default()
         };
 
@@ -3932,6 +3930,7 @@ pub(crate) fn prepare_effects(
     {
         // All those bind groups use the buffer so need to be re-created
         trace!("*** Effect metadata buffer re-allocated; clearing all bind groups using it.");
+        effect_bind_groups.particle_buffers.clear();
         effects_meta.indirect_metadata_bind_group = None;
         effect_bind_groups.init_metadata_bind_groups.clear();
         effect_bind_groups.update_metadata_bind_groups.clear();
@@ -3949,6 +3948,9 @@ pub(crate) fn prepare_effects(
     {
         // All property bind groups use the spawner buffer, which was reallocate
         effect_bind_groups.particle_buffers.clear();
+        effect_bind_groups.init_metadata_bind_groups.clear();
+        effect_bind_groups.update_metadata_bind_groups.clear();
+        effect_bind_groups.render_metadata_bind_groups.clear();
         property_bind_groups.clear(true);
         effects_meta.indirect_spawner_bind_group = None;
     }
@@ -4127,7 +4129,7 @@ pub(crate) fn batch_effects(
     effects_meta.total_batch_count = 0;
     effects_meta.total_batches_requiring_sorting_count = 0;
     effects_meta.total_batches_with_events_count = 0;
-    effects_meta.batch_effect_index_buffer.clear();
+    effects_meta.batch_effect_indices_buffer.clear();
     effects_meta.batch_descriptor_buffer.clear();
     effects_meta
         .batch_descriptors_requiring_sorting_buffer
@@ -4187,7 +4189,7 @@ pub(crate) fn batch_effects(
 
         // Push init indirect draw command if necessary.
 
-        let first_batch_effect_index_offset = effects_meta.batch_effect_index_buffer.len() as u32;
+        let first_batch_effect_index_offset = effects_meta.batch_effect_indices_buffer.len() as u32;
 
         let first_effect_batch = sorted_effects
             .instances
@@ -4199,14 +4201,17 @@ pub(crate) fn batch_effects(
                 .instances
                 .get(effect_batch_index.0 as usize)
                 .unwrap();
-            effects_meta.batch_effect_index_buffer.push(
-                sorted_effect_batch
-                    .dispatch_buffer_indices
-                    .effect_metadata_buffer_table_id
-                    .0,
-            );
+            effects_meta
+                .batch_effect_indices_buffer
+                .push(GpuBatchEffectIndices {
+                    effect_metadata_index: sorted_effect_batch
+                        .dispatch_buffer_indices
+                        .effect_metadata_buffer_table_id
+                        .0,
+                    spawner_index: sorted_effect_batch.spawner_base,
+                });
         }
-        let last_batch_effect_index_offset = effects_meta.batch_effect_index_buffer.len() as u32;
+        let last_batch_effect_index_offset = effects_meta.batch_effect_indices_buffer.len() as u32;
 
         let indirect_draw_command_offset = indirect_draw_command_offset.unwrap_or_default();
 
@@ -4341,7 +4346,7 @@ pub(crate) fn prepare_late_gpu_resources(
         .render_batch_metadata_buffer
         .write_buffer(&render_device, &render_queue);
     ensure_raw_buffer_nonempty_and_write(
-        &mut effects_meta.batch_effect_index_buffer,
+        &mut effects_meta.batch_effect_indices_buffer,
         &render_device,
         &render_queue,
     );
@@ -4986,7 +4991,7 @@ impl EffectBindGroups {
                         }),
                     },
                     // @group(2) @binding(2) var<storage, read>
-                    // batch_effect_indices : array<u32>;
+                    // batch_effect_indices : array<BatchEffectIndices>;
                     BindGroupEntry {
                         binding: 2,
                         resource: BindingResource::Buffer(BufferBinding {
@@ -5864,11 +5869,11 @@ pub(crate) fn prepare_bind_groups(
                             .expect("Render batch descriptor buffer must be present"),
                     },
                     // @group(0) @binding(3) var<storage, read>
-                    // batch_effect_indices : array<u32>;
+                    // batch_effect_indices : array<BatchEffectIndices>;
                     BindGroupEntry {
                         binding: 3,
                         resource: effects_meta
-                            .batch_effect_index_buffer
+                            .batch_effect_indices_buffer
                             .binding()
                             .expect("Render batch effect index buffer must be present"),
                     },
@@ -5935,11 +5940,11 @@ pub(crate) fn prepare_bind_groups(
                             .expect("Render batch descriptor buffer not available"),
                     },
                     // @group(0) @binding(2) var<storage, read>
-                    // batch_effect_indices : array<u32>;
+                    // batch_effect_indices : array<BatchEffectIndices>;
                     BindGroupEntry {
                         binding: 2,
                         resource: effects_meta
-                            .batch_effect_index_buffer
+                            .batch_effect_indices_buffer
                             .binding()
                             .expect("Render batch effect index buffer not available"),
                     },
@@ -5995,11 +6000,11 @@ pub(crate) fn prepare_bind_groups(
                         .expect("Render batch descriptor buffer not available"),
                 },
                 // @group(0) @binding(2) var<storage, read>
-                // batch_effect_indices : array<u32>;
+                // batch_effect_indices : array<BatchEffectIndices>;
                 BindGroupEntry {
                     binding: 2,
                     resource: effects_meta
-                        .batch_effect_index_buffer
+                        .batch_effect_indices_buffer
                         .binding()
                         .expect("Render batch effect index buffer not available"),
                 },
@@ -6176,7 +6181,7 @@ pub(crate) fn prepare_bind_groups(
                         .buffer()
                         .expect("Batch descriptor buffer must be present"),
                     effects_meta
-                        .batch_effect_index_buffer
+                        .batch_effect_indices_buffer
                         .buffer()
                         .expect("Batch effect index buffer must be present"),
                     consume_event_buffers,
@@ -6207,7 +6212,7 @@ pub(crate) fn prepare_bind_groups(
                         .buffer()
                         .expect("Render batch descriptor buffer must be present"),
                     effects_meta
-                        .batch_effect_index_buffer
+                        .batch_effect_indices_buffer
                         .buffer()
                         .expect("Render batch effect index buffer must be present"),
                     effects_meta.effect_metadata_buffer.buffer().unwrap(),
@@ -6238,7 +6243,7 @@ pub(crate) fn prepare_bind_groups(
                         .buffer()
                         .expect("Batch descriptor buffer must be present"),
                     effects_meta
-                        .batch_effect_index_buffer
+                        .batch_effect_indices_buffer
                         .buffer()
                         .expect("Batch effect index buffer must be present"),
                 )
@@ -6258,7 +6263,7 @@ pub(crate) fn prepare_bind_groups(
                 .buffer()
                 .expect("Batch descriptor buffer must be present");
             let render_batch_effect_index_buffer = effects_meta
-                .batch_effect_index_buffer
+                .batch_effect_indices_buffer
                 .buffer()
                 .expect("Batch effect index buffer must be present");
             let render_batch_descriptors_requiring_sorting_buffer = effects_meta

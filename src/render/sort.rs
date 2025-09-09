@@ -495,7 +495,7 @@ impl SortBindGroups {
                             count: None,
                         },
                         // @group(0) @binding(5) var<storage, read>
-                        // batch_effect_indices : array<u32>;
+                        // batch_effect_indices : array<BatchEffectIndices>;
                         BindGroupLayoutEntry {
                             binding: 5,
                             visibility: ShaderStages::COMPUTE,
@@ -615,7 +615,7 @@ impl SortBindGroups {
                             }),
                         },
                         // @group(0) @binding(3) var<storage, read>
-                        // batch_effect_indices : array<u32>;
+                        // batch_effect_indices : array<BatchEffectIndices>;
                         BindGroupEntry {
                             binding: 3,
                             resource: BindingResource::Buffer(BufferBinding {
@@ -766,7 +766,7 @@ impl SortBindGroups {
                                 }),
                             },
                             // @group(0) @binding(5) var<storage, read>
-                            // batch_effect_indices : array<u32>;
+                            // batch_effect_indices : array<BatchEffectIndices>;
                             BindGroupEntry {
                                 binding: 5,
                                 resource: BindingResource::Buffer(BufferBinding {
@@ -886,7 +886,7 @@ impl SortBindGroups {
                                 }),
                             },
                             // @group(0) @binding(4) var<storage, read>
-                            // batch_effect_indices : array<u32>;
+                            // batch_effect_indices : array<BatchEffectIndices>;
                             BindGroupEntry {
                                 binding: 4,
                                 resource: BindingResource::Buffer(BufferBinding {

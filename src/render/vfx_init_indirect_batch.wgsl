@@ -1,11 +1,12 @@
 #import bevy_hanabi::vfx_common::{
-    BatchDescriptor, BatchMetadata, ChildInfoBuffer, EffectMetadata, IndirectDispatch
+    BatchDescriptor, BatchEffectIndices, BatchMetadata, ChildInfoBuffer, EffectMetadata,
+    IndirectDispatch
 }
 
 @group(0) @binding(0) var<uniform> batch_metadata : BatchMetadata;
 @group(0) @binding(1) var<storage, read> batch_descriptors_with_events : array<u32>;
 @group(0) @binding(2) var<storage, read> batch_descriptors : array<BatchDescriptor>;
-@group(0) @binding(3) var<storage, read> batch_effect_indices : array<u32>;
+@group(0) @binding(3) var<storage, read> batch_effect_indices : array<BatchEffectIndices>;
 @group(0) @binding(4) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 @group(0) @binding(5) var<storage, read> child_info : ChildInfoBuffer;
 @group(0) @binding(6) var<storage, read_write> init_indirect_dispatch : array<IndirectDispatch>;
@@ -29,7 +30,8 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     for (var batch_effect_index_offset = first_batch_effect_index_offset;
             batch_effect_index_offset < last_batch_effect_index_offset;
             batch_effect_index_offset += 1u) {
-        effect_metadata_index = batch_effect_indices[batch_effect_index_offset];
+        effect_metadata_index =
+            batch_effect_indices[batch_effect_index_offset].effect_metadata_index;
         child_info_index = effect_metadata[effect_metadata_index].global_child_index;
         total_event_count += u32(child_info.rows[child_info_index].event_count);
     }

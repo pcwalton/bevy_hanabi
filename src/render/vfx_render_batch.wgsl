@@ -1,11 +1,11 @@
 #import bevy_hanabi::vfx_common::{
-    BatchDescriptor, BatchMetadata, EffectMetadata, IndexedIndirectDrawCommand,
+    BatchDescriptor, BatchEffectIndices, BatchMetadata, EffectMetadata, IndexedIndirectDrawCommand,
     NonIndexedIndirectDrawCommand
 }
 
 @group(0) @binding(0) var<uniform> batch_metadata : BatchMetadata;
 @group(0) @binding(1) var<storage, read> batch_descriptors : array<BatchDescriptor>;
-@group(0) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
+@group(0) @binding(2) var<storage, read> batch_effect_indices : array<BatchEffectIndices>;
 @group(0) @binding(3) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 @group(0) @binding(4) var<storage, read_write> indexed_indirect_draw_commands :
     array<IndexedIndirectDrawCommand>;
@@ -32,7 +32,8 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         return;
     }
 
-    let first_batch_effect_index = batch_effect_indices[first_batch_effect_index_offset];
+    let first_batch_effect_index =
+        batch_effect_indices[first_batch_effect_index_offset].effect_metadata_index;
 
     let index_or_vertex_count = effect_metadata[first_batch_effect_index].vertex_count;
     let first_index_or_vertex_offset =
@@ -44,8 +45,9 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // over all the batches in parallel.
     let effect_count = last_batch_effect_index_offset - first_batch_effect_index_offset;
     for (var effect_index = 0u; effect_index < effect_count; effect_index += 1u) {
-        let batch_effect_index =
-            batch_effect_indices[first_batch_effect_index_offset + effect_index];
+        let batch_effect_index = batch_effect_indices[
+            first_batch_effect_index_offset + effect_index
+        ].effect_metadata_index;
         let instance_count = effect_metadata[batch_effect_index].instance_count;
         let base_instance = effect_metadata[batch_effect_index].base_instance;
         let indirect_draw_command_index = indirect_draw_command_offset + effect_index;

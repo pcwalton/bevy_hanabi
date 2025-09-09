@@ -1,10 +1,10 @@
 #import bevy_hanabi::vfx_common::{
-    BatchDescriptor, BatchMetadata, EffectMetadata, IndirectDispatch
+    BatchDescriptor, BatchEffectIndices, BatchMetadata, EffectMetadata, IndirectDispatch
 }
 
 @group(0) @binding(0) var<uniform> batch_metadata : BatchMetadata;
 @group(0) @binding(1) var<storage, read> batch_descriptors : array<BatchDescriptor>;
-@group(0) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
+@group(0) @binding(2) var<storage, read> batch_effect_indices : array<BatchEffectIndices>;
 @group(0) @binding(3) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 @group(0) @binding(4) var<storage, read_write> dispatch_indirect_buffer : array<IndirectDispatch>;
 
@@ -27,7 +27,8 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     for (var batch_effect_index_offset = first_batch_effect_index_offset;
             batch_effect_index_offset < last_batch_effect_index_offset;
             batch_effect_index_offset += 1u) {
-        let batch_effect_index = batch_effect_indices[batch_effect_index_offset];
+        let batch_effect_index =
+            batch_effect_indices[batch_effect_index_offset].effect_metadata_index;
         total_alive_count += effect_metadata[batch_effect_index].max_update;
     }
 

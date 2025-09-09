@@ -97,6 +97,11 @@ struct IndirectDispatch {
 /// Stride in u32 count (4 bytes) of the IndirectDispatch struct.
 const DISPATCH_INDIRECT_STRIDE: u32 = 3u;
 
+struct BatchEffectIndices {
+    effect_metadata_index: u32,
+    spawner_index: u32,
+}
+
 // Effect metadata offsets. Used when accessing a tightly packed array of EffectMetadata
 // as a raw array<u32>, so that we can avoid WGSL struct padding and keep data more compact
 // in the GPU buffer. Each offset corresponds to a field in the EffectMetadata struct.
@@ -173,9 +178,6 @@ struct EffectMetadata {
     /// The value loops back after some time, but unless some particle lives
     /// forever there's little chance of repetition.
     particle_counter: atomic<u32>,
-
-    /// Index of the spawner associated with this effect in the spawner buffer.
-    spawner_index: u32,
 
     mesh_is_indexed: u32,
 

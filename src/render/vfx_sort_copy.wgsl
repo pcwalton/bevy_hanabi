@@ -1,4 +1,6 @@
-#import bevy_hanabi::vfx_common::{BatchDescriptor, EffectMetadata, EffectSortMetadata}
+#import bevy_hanabi::vfx_common::{
+    BatchDescriptor, BatchEffectIndices, EffectMetadata, EffectSortMetadata
+}
 
 /// Key-value pair for sorting, with optional second sort key.
 struct KeyValuePair {
@@ -20,7 +22,7 @@ struct IndirectIndexBuffer {
 // Technically read-only, but the type contains atomic<> fields and wasm is strict about it
 @group(0) @binding(2) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 @group(0) @binding(3) var<storage, read> batch_descriptor : BatchDescriptor;
-@group(0) @binding(4) var<storage, read> batch_effect_indices : array<u32>;
+@group(0) @binding(4) var<storage, read> batch_effect_indices : array<BatchEffectIndices>;
 @group(0) @binding(5) var<storage, read> effect_sort_metadata : array<EffectSortMetadata>;
 
 /// Copy the sorted particle indices back into the effect index buffer.
@@ -32,7 +34,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
     var row_index = thread_index;
     while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
-        effect_metadata_index = batch_effect_indices[effect_index_offset];
+        effect_metadata_index = batch_effect_indices[effect_index_offset].effect_metadata_index;
         // FIXME: This shouldn't be atomic.
         let effect_instance_count =
             atomicLoad(&effect_metadata[effect_metadata_index].instance_count);

@@ -208,6 +208,13 @@ pub struct GpuChildInfo {
     pub spawn_event_capacity: u32,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
+pub struct GpuBatchEffectIndices {
+    pub effect_metadata_index: u32,
+    pub spawner_index: u32,
+}
+
 #[derive(Debug, Clone, Component)]
 pub struct CachedEffectEvents {
     /// Index of the [`EventBuffer`] inside the [`EventCache::buffers`]

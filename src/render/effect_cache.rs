@@ -18,8 +18,10 @@ use super::{buffer_table::BufferTableId, BufferBindingSource};
 use crate::{
     asset::EffectAsset,
     render::{
-        calc_hash, event::GpuChildInfo, GpuEffectMetadata, GpuRenderBatchDescriptor,
-        GpuSpawnerParams, LayoutFlags, StorageType as _, INDIRECT_INDEX_SIZE,
+        calc_hash,
+        event::{GpuBatchEffectIndices, GpuChildInfo},
+        GpuEffectMetadata, GpuRenderBatchDescriptor, GpuSpawnerParams, LayoutFlags,
+        StorageType as _, INDIRECT_INDEX_SIZE,
     },
     ParticleLayout,
 };
@@ -1028,14 +1030,14 @@ fn create_metadata_init_bind_group_layout(
     });
 
     // @group(2) @binding(2) var<storage, read> batch_effect_indices :
-    // array<u32>;
+    // array<BatchEffectIndices>;
     entries.push(BindGroupLayoutEntry {
         binding: 2,
         visibility: ShaderStages::COMPUTE,
         ty: BindingType::Buffer {
             ty: BufferBindingType::Storage { read_only: true },
             has_dynamic_offset: false,
-            min_binding_size: Some(u32::min_size()),
+            min_binding_size: Some(GpuBatchEffectIndices::min_size()),
         },
         count: None,
     });
@@ -1110,14 +1112,14 @@ fn create_metadata_update_bind_group_layout(
         count: None,
     });
     // @group(0) @binding(1) var<storage, read> batch_effect_indices :
-    // array<u32>;
+    // array<BatchEffectIndices>;
     entries.push(BindGroupLayoutEntry {
         binding: 1,
         visibility: ShaderStages::COMPUTE,
         ty: BindingType::Buffer {
             ty: BufferBindingType::Storage { read_only: true },
             has_dynamic_offset: false,
-            min_binding_size: Some(u32::min_size()),
+            min_binding_size: Some(GpuBatchEffectIndices::min_size()),
         },
         count: None,
     });
@@ -1215,14 +1217,14 @@ fn create_metadata_render_bind_group_layout(render_device: &RenderDevice) -> Bin
                 count: None,
             },
             // @group(2) @binding(2) var<storage, read> batch_effect_indices :
-            // array<u32>;
+            // array<GpuBatchEffectIndices>;
             BindGroupLayoutEntry {
                 binding: 2,
                 visibility: ShaderStages::VERTEX,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(u32::min_size()),
+                    min_binding_size: Some(GpuBatchEffectIndices::min_size()),
                 },
                 count: None,
             },

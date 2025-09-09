@@ -1,5 +1,5 @@
 #import bevy_hanabi::vfx_common::{
-    BatchDescriptor, ChildInfo, ChildInfoBuffer, EventBuffer, EffectMetadata,
+    BatchDescriptor, BatchEffectIndices, ChildInfo, ChildInfoBuffer, EventBuffer, EffectMetadata,
     IndirectBuffer, IndirectDispatch, RenderGroupIndirect, SimParams, Spawner,
     seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
@@ -44,7 +44,7 @@ struct ParentParticleBuffer {
 // "metadata" group @3
 @group(3) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 @group(3) @binding(1) var<storage, read> batch_descriptor : BatchDescriptor;
-@group(3) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
+@group(3) @binding(2) var<storage, read> batch_effect_indices : array<BatchEffectIndices>;
 #ifdef CONSUME_GPU_SPAWN_EVENTS
 @group(3) @binding(3) var<storage, read> child_info_buffer : ChildInfoBuffer;
 @group(3) @binding(4) var<storage, read> event_buffer : EventBuffer;
@@ -64,10 +64,12 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // TODO: This should be a prefix sum and binary search or something instead
     // of linear search.
     var effect_metadata_index = 0u;
+    var spawner_index = 0u;
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
     var event_index = thread_index;
     while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
-        effect_metadata_index = batch_effect_indices[effect_index_offset];
+        effect_metadata_index = batch_effect_indices[effect_index_offset].effect_metadata_index;
+        spawner_index = batch_effect_indices[effect_index_offset].spawner_index;
         let global_child_index = effect_metadata[effect_metadata_index].global_child_index;
         let this_event_count = u32(child_info_buffer.rows[global_child_index].event_count);
         if (event_index < this_event_count) {
@@ -79,7 +81,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     if (effect_index_offset == batch_descriptor.last_batch_effect_index_offset) {
         return;
     }
-    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
     let indirect_particle_index = event_index;
 #else
     // Step through render batch descriptors. Cap to the actual amount of
@@ -87,12 +88,12 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // TODO: This should be a prefix sum and binary search or something instead
     // of linear search.
     var effect_metadata_index = 0u;
+    var spawner_index = 0u;
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
     var indirect_particle_index = thread_index;
-    var spawner_index = 0u;
     while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
-        effect_metadata_index = batch_effect_indices[effect_index_offset];
-        spawner_index = effect_metadata[effect_metadata_index].spawner_index;
+        effect_metadata_index = batch_effect_indices[effect_index_offset].effect_metadata_index;
+        spawner_index = batch_effect_indices[effect_index_offset].spawner_index;
         let this_spawn_count = u32(spawners[spawner_index].spawn);
         if (indirect_particle_index < this_spawn_count) {
             break;

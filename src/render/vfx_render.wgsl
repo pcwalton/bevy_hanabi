@@ -1,6 +1,6 @@
 #import bevy_render::view::View
 #import bevy_hanabi::vfx_common::{
-    BatchDescriptor, EffectMetadata, IndirectBuffer, SimParams, Spawner,
+    BatchDescriptor, BatchEffectIndices, EffectMetadata, IndirectBuffer, SimParams, Spawner,
     seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
     rand_normal_f, rand_normal_vec2, rand_normal_vec3, rand_normal_vec4, proj
@@ -37,7 +37,7 @@ struct VertexOutput {
 // "metadata" group @2
 @group(2) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
 @group(2) @binding(1) var<storage, read> batch_descriptor : BatchDescriptor;
-@group(2) @binding(2) var<storage, read> batch_effect_indices : array<u32>;
+@group(2) @binding(2) var<storage, read> batch_effect_indices : array<BatchEffectIndices>;
 
 {{MATERIAL_BINDINGS}}
 
@@ -155,9 +155,11 @@ fn vertex(
     var out: VertexOutput;
 
     var effect_metadata_index = 0u;
+    var spawner_index = 0u;
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
     while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
-        effect_metadata_index = batch_effect_indices[effect_index_offset];
+        effect_metadata_index = batch_effect_indices[effect_index_offset].effect_metadata_index;
+        spawner_index = batch_effect_indices[effect_index_offset].spawner_index;
         let base_instance = effect_metadata[effect_metadata_index].base_instance;
         let instance_count = atomicLoad(&effect_metadata[effect_metadata_index].instance_count);
         if (instance_index < base_instance) {
@@ -175,7 +177,6 @@ fn vertex(
     }
 
     // Fetch particle
-    let spawner_index = effect_metadata[effect_metadata_index].spawner_index;
     let pong = spawners[spawner_index].render_pong;
     let particle_index = indirect_buffer.indices[3u * instance_index + pong];
     var particle = particle_buffer.particles[particle_index];
