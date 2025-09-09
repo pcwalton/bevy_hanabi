@@ -1,6 +1,12 @@
 use std::hash::{Hash, Hasher};
 
-use bevy::{ecs::resource::Resource, log::trace, math::FloatOrd, prelude::*, reflect::Reflect};
+use bevy::{
+    ecs::resource::Resource,
+    log::{info, trace},
+    math::FloatOrd,
+    prelude::*,
+    reflect::Reflect,
+};
 use rand::{
     distributions::{uniform::SampleUniform, Distribution, Uniform},
     SeedableRng,
@@ -591,6 +597,9 @@ pub struct EffectSpawner {
     /// Accumulated time for the current (partial) cycle, in seconds.
     cycle_time: f32,
 
+    /// Number of particles we've spawned thus far in this period.
+    cycle_spawn: u32,
+
     /// Number of cycles already completed.
     completed_cycle_count: u32,
 
@@ -640,6 +649,7 @@ impl EffectSpawner {
         Self {
             settings: *settings,
             cycle_time: 0.,
+            cycle_spawn: 0,
             completed_cycle_count: if settings.emit_on_start || settings.is_forever() {
                 // Infinitely repeating effects always start at cycle #0.
                 0
@@ -787,6 +797,7 @@ impl EffectSpawner {
         }
 
         // Use a loop in case the timestep dt spans multiple cycles
+        let mut count = 0;
         loop {
             // Check if this is a new cycle which needs resampling
             if self.sampled_period == 0.0 {
@@ -811,20 +822,16 @@ impl EffectSpawner {
             let new_time = self.cycle_time + dt;
 
             // If inside the spawn period, accumulate some particle spawn count
-            if self.cycle_time <= self.sampled_spawn_duration {
-                // If the spawn time is very small, close to zero, spawn all particles
-                // immediately in one burst over a single frame.
-                self.spawn_remainder += if self.sampled_spawn_duration < 1e-5f32.max(dt / 100.0) {
-                    self.sampled_count
-                } else {
-                    // Spawn an amount of particles equal to the fraction of time the current frame
-                    // spans compared to the total burst duration.
-                    let ratio = ((new_time.min(self.sampled_spawn_duration) - self.cycle_time)
-                        / self.sampled_spawn_duration)
-                        .clamp(0., 1.);
-                    self.sampled_count * ratio
-                };
-            }
+            self.spawn_remainder = if new_time <= self.sampled_spawn_duration {
+                // Spawn an amount of particles equal to the fraction of time the current frame
+                // spans compared to the total burst duration.
+                let ratio = (new_time.min(self.sampled_spawn_duration)
+                    / self.sampled_spawn_duration)
+                    .clamp(0., 1.);
+                self.sampled_count * ratio
+            } else {
+                self.sampled_count
+            };
 
             // Increment current time
             self.cycle_time = new_time;
@@ -833,6 +840,8 @@ impl EffectSpawner {
             if self.cycle_time >= self.sampled_period {
                 dt = self.cycle_time - self.sampled_period;
                 self.cycle_time = 0.0;
+                count += self.spawn_remainder.floor() as u32 - self.cycle_spawn;
+                self.cycle_spawn = 0;
                 self.completed_cycle_count += 1;
 
                 // Mark as "need resampling"
@@ -853,9 +862,9 @@ impl EffectSpawner {
 
         // Extract integral number of particles to spawn this frame, keep remainder for
         // next one
-        let count = self.spawn_remainder.floor();
-        self.spawn_remainder -= count;
-        self.spawn_count = count as u32;
+        count += self.spawn_remainder.floor() as u32 - self.cycle_spawn;
+        self.cycle_spawn += count;
+        self.spawn_count = count;
 
         self.spawn_count
     }
