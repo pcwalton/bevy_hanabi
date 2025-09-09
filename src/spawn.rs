@@ -1,12 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use bevy::{
-    ecs::resource::Resource,
-    log::{info, trace},
-    math::FloatOrd,
-    prelude::*,
-    reflect::Reflect,
-};
+use bevy::{ecs::resource::Resource, log::trace, math::FloatOrd, prelude::*, reflect::Reflect};
 use rand::{
     distributions::{uniform::SampleUniform, Distribution, Uniform},
     SeedableRng,
