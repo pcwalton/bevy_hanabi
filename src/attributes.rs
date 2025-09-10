@@ -106,18 +106,34 @@
 //! | [`Attribute::F32_1`] | A custom `f32` attribute. |
 //! | [`Attribute::F32_2`] | A custom `f32` attribute. |
 //! | [`Attribute::F32_3`] | A custom `f32` attribute. |
+//! | [`Attribute::F32_4`] | A custom `f32` attribute. |
+//! | [`Attribute::F32_5`] | A custom `f32` attribute. |
+//! | [`Attribute::F32_6`] | A custom `f32` attribute. |
+//! | [`Attribute::F32_7`] | A custom `f32` attribute. |
 //! | [`Attribute::F32X2_0`] | A custom `vec2<f32>` attribute. |
 //! | [`Attribute::F32X2_1`] | A custom `vec2<f32>` attribute. |
 //! | [`Attribute::F32X2_2`] | A custom `vec2<f32>` attribute. |
 //! | [`Attribute::F32X2_3`] | A custom `vec2<f32>` attribute. |
+//! | [`Attribute::F32X2_4`] | A custom `vec2<f32>` attribute. |
+//! | [`Attribute::F32X2_5`] | A custom `vec2<f32>` attribute. |
+//! | [`Attribute::F32X2_6`] | A custom `vec2<f32>` attribute. |
+//! | [`Attribute::F32X2_7`] | A custom `vec2<f32>` attribute. |
 //! | [`Attribute::F32X3_0`] | A custom `vec3<f32>` attribute. |
 //! | [`Attribute::F32X3_1`] | A custom `vec3<f32>` attribute. |
 //! | [`Attribute::F32X3_2`] | A custom `vec3<f32>` attribute. |
 //! | [`Attribute::F32X3_3`] | A custom `vec3<f32>` attribute. |
+//! | [`Attribute::F32X3_4`] | A custom `vec3<f32>` attribute. |
+//! | [`Attribute::F32X3_5`] | A custom `vec3<f32>` attribute. |
+//! | [`Attribute::F32X3_6`] | A custom `vec3<f32>` attribute. |
+//! | [`Attribute::F32X3_7`] | A custom `vec3<f32>` attribute. |
 //! | [`Attribute::F32X4_0`] | A custom `vec4<f32>` attribute. |
 //! | [`Attribute::F32X4_1`] | A custom `vec4<f32>` attribute. |
 //! | [`Attribute::F32X4_2`] | A custom `vec4<f32>` attribute. |
 //! | [`Attribute::F32X4_3`] | A custom `vec4<f32>` attribute. |
+//! | [`Attribute::F32X4_4`] | A custom `vec4<f32>` attribute. |
+//! | [`Attribute::F32X4_5`] | A custom `vec4<f32>` attribute. |
+//! | [`Attribute::F32X4_6`] | A custom `vec4<f32>` attribute. |
+//! | [`Attribute::F32X4_7`] | A custom `vec4<f32>` attribute. |
 //!
 //! [modifiers]: crate::modifier
 //! [`SetAttributeModifier`]: crate::modifier::SetAttributeModifier
@@ -651,18 +667,50 @@ impl AttributeInner {
         Value::Scalar(ScalarValue::Float(0.)),
     );
 
+    pub const F32_4: &'static AttributeInner = &AttributeInner::new(
+        Cow::Borrowed("f32_4"),
+        Value::Scalar(ScalarValue::Float(0.)),
+    );
+
+    pub const F32_5: &'static AttributeInner = &AttributeInner::new(
+        Cow::Borrowed("f32_5"),
+        Value::Scalar(ScalarValue::Float(0.)),
+    );
+
+    pub const F32_6: &'static AttributeInner = &AttributeInner::new(
+        Cow::Borrowed("f32_6"),
+        Value::Scalar(ScalarValue::Float(0.)),
+    );
+
+    pub const F32_7: &'static AttributeInner = &AttributeInner::new(
+        Cow::Borrowed("f32_7"),
+        Value::Scalar(ScalarValue::Float(0.)),
+    );
+
     declare_custom_attr_inner!(F32X2_0, Vec2, "f32x2_0", new_vec2);
     declare_custom_attr_inner!(F32X2_1, Vec2, "f32x2_1", new_vec2);
     declare_custom_attr_inner!(F32X2_2, Vec2, "f32x2_2", new_vec2);
     declare_custom_attr_inner!(F32X2_3, Vec2, "f32x2_3", new_vec2);
+    declare_custom_attr_inner!(F32X2_4, Vec2, "f32x2_4", new_vec2);
+    declare_custom_attr_inner!(F32X2_5, Vec2, "f32x2_5", new_vec2);
+    declare_custom_attr_inner!(F32X2_6, Vec2, "f32x2_6", new_vec2);
+    declare_custom_attr_inner!(F32X2_7, Vec2, "f32x2_7", new_vec2);
     declare_custom_attr_inner!(F32X3_0, Vec3, "f32x3_0", new_vec3);
     declare_custom_attr_inner!(F32X3_1, Vec3, "f32x3_1", new_vec3);
     declare_custom_attr_inner!(F32X3_2, Vec3, "f32x3_2", new_vec3);
     declare_custom_attr_inner!(F32X3_3, Vec3, "f32x3_3", new_vec3);
+    declare_custom_attr_inner!(F32X3_4, Vec3, "f32x3_4", new_vec3);
+    declare_custom_attr_inner!(F32X3_5, Vec3, "f32x3_5", new_vec3);
+    declare_custom_attr_inner!(F32X3_6, Vec3, "f32x3_6", new_vec3);
+    declare_custom_attr_inner!(F32X3_7, Vec3, "f32x3_7", new_vec3);
     declare_custom_attr_inner!(F32X4_0, Vec4, "f32x4_0", new_vec4);
     declare_custom_attr_inner!(F32X4_1, Vec4, "f32x4_1", new_vec4);
     declare_custom_attr_inner!(F32X4_2, Vec4, "f32x4_2", new_vec4);
     declare_custom_attr_inner!(F32X4_3, Vec4, "f32x4_3", new_vec4);
+    declare_custom_attr_inner!(F32X4_4, Vec4, "f32x4_4", new_vec4);
+    declare_custom_attr_inner!(F32X4_5, Vec4, "f32x4_5", new_vec4);
+    declare_custom_attr_inner!(F32X4_6, Vec4, "f32x4_6", new_vec4);
+    declare_custom_attr_inner!(F32X4_7, Vec4, "f32x4_7", new_vec4);
 
     declare_custom_attr_u32_inner!(U32_0, "u32_0", Uint);
     declare_custom_attr_u32_inner!(U32_1, "u32_1", Uint);
@@ -684,6 +732,8 @@ impl AttributeInner {
         &AttributeInner::new(Cow::Borrowed("pad3"), Value::Scalar(ScalarValue::Uint(0)));
     pub(crate) const PAD4: &'static AttributeInner =
         &AttributeInner::new(Cow::Borrowed("pad4"), Value::Scalar(ScalarValue::Uint(0)));
+    pub(crate) const PAD5: &'static AttributeInner =
+        &AttributeInner::new(Cow::Borrowed("pad5"), Value::Scalar(ScalarValue::Uint(0)));
 
     #[inline]
     pub(crate) const fn new(name: Cow<'static, str>, default_value: Value) -> Self {
@@ -1300,18 +1350,90 @@ impl Attribute {
     /// [`ScalarType::Float`]
     pub const F32_3: Attribute = Attribute(AttributeInner::F32_3);
 
+    /// A generic scalar float attribute.
+    ///
+    /// This attribute can be used for anything. It has no specific meaning. You
+    /// can store whatever per-particle value you want in it (for example, at
+    /// spawn time) and read it back later.
+    ///
+    /// # Name
+    ///
+    /// `f32_4`
+    ///
+    /// # Type
+    ///
+    /// [`ScalarType::Float`]
+    pub const F32_4: Attribute = Attribute(AttributeInner::F32_4);
+
+    /// A generic scalar float attribute.
+    ///
+    /// This attribute can be used for anything. It has no specific meaning. You
+    /// can store whatever per-particle value you want in it (for example, at
+    /// spawn time) and read it back later.
+    ///
+    /// # Name
+    ///
+    /// `f32_5`
+    ///
+    /// # Type
+    ///
+    /// [`ScalarType::Float`]
+    pub const F32_5: Attribute = Attribute(AttributeInner::F32_5);
+
+    /// A generic scalar float attribute.
+    ///
+    /// This attribute can be used for anything. It has no specific meaning. You
+    /// can store whatever per-particle value you want in it (for example, at
+    /// spawn time) and read it back later.
+    ///
+    /// # Name
+    ///
+    /// `f32_6`
+    ///
+    /// # Type
+    ///
+    /// [`ScalarType::Float`]
+    pub const F32_6: Attribute = Attribute(AttributeInner::F32_6);
+
+    /// A generic scalar float attribute.
+    ///
+    /// This attribute can be used for anything. It has no specific meaning. You
+    /// can store whatever per-particle value you want in it (for example, at
+    /// spawn time) and read it back later.
+    ///
+    /// # Name
+    ///
+    /// `f32_7`
+    ///
+    /// # Type
+    ///
+    /// [`ScalarType::Float`]
+    pub const F32_7: Attribute = Attribute(AttributeInner::F32_7);
+
     declare_custom_attr_pub!(F32X2_0, "f32x2_0", 2, VEC2F);
     declare_custom_attr_pub!(F32X2_1, "f32x2_1", 2, VEC2F);
     declare_custom_attr_pub!(F32X2_2, "f32x2_2", 2, VEC2F);
     declare_custom_attr_pub!(F32X2_3, "f32x2_3", 2, VEC2F);
+    declare_custom_attr_pub!(F32X2_4, "f32x2_4", 2, VEC2F);
+    declare_custom_attr_pub!(F32X2_5, "f32x2_5", 2, VEC2F);
+    declare_custom_attr_pub!(F32X2_6, "f32x2_6", 2, VEC2F);
+    declare_custom_attr_pub!(F32X2_7, "f32x2_7", 2, VEC2F);
     declare_custom_attr_pub!(F32X3_0, "f32x3_0", 3, VEC3F);
     declare_custom_attr_pub!(F32X3_1, "f32x3_1", 3, VEC3F);
     declare_custom_attr_pub!(F32X3_2, "f32x3_2", 3, VEC3F);
     declare_custom_attr_pub!(F32X3_3, "f32x3_3", 3, VEC3F);
+    declare_custom_attr_pub!(F32X3_4, "f32x3_4", 3, VEC3F);
+    declare_custom_attr_pub!(F32X3_5, "f32x3_5", 3, VEC3F);
+    declare_custom_attr_pub!(F32X3_6, "f32x3_6", 3, VEC3F);
+    declare_custom_attr_pub!(F32X3_7, "f32x3_7", 3, VEC3F);
     declare_custom_attr_pub!(F32X4_0, "f32x4_0", 4, VEC4F);
     declare_custom_attr_pub!(F32X4_1, "f32x4_1", 4, VEC4F);
     declare_custom_attr_pub!(F32X4_2, "f32x4_2", 4, VEC4F);
     declare_custom_attr_pub!(F32X4_3, "f32x4_3", 4, VEC4F);
+    declare_custom_attr_pub!(F32X4_4, "f32x4_4", 4, VEC4F);
+    declare_custom_attr_pub!(F32X4_5, "f32x4_5", 4, VEC4F);
+    declare_custom_attr_pub!(F32X4_6, "f32x4_6", 4, VEC4F);
+    declare_custom_attr_pub!(F32X4_7, "f32x4_7", 4, VEC4F);
 
     declare_custom_attr_u32_pub!(U32_0, "u32_0", Uint);
     declare_custom_attr_u32_pub!(U32_1, "u32_1", Uint);
@@ -1380,6 +1502,7 @@ impl Attribute {
     pub(crate) const PAD2: Attribute = Attribute(AttributeInner::PAD2);
     pub(crate) const PAD3: Attribute = Attribute(AttributeInner::PAD3);
     pub(crate) const PAD4: Attribute = Attribute(AttributeInner::PAD4);
+    pub(crate) const PAD5: Attribute = Attribute(AttributeInner::PAD5);
 
     /// Retrieve an attribute by its name.
     ///
@@ -1515,6 +1638,7 @@ impl ParticleLayoutBuilder {
             Attribute::PAD2,
             Attribute::PAD3,
             Attribute::PAD4,
+            Attribute::PAD5,
         ];
         let mut next_pad = 0;
 
@@ -1646,7 +1770,7 @@ impl ParticleLayoutBuilder {
             debug_assert_eq!(rem % 4, 0);
             let num = rem / 4;
             for _ in 0..num {
-                debug_assert!(next_pad < 3);
+                debug_assert!(next_pad < pads.len());
                 let pad = AttributeLayout {
                     attribute: pads[next_pad],
                     offset,
