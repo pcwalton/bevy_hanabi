@@ -4242,6 +4242,16 @@ pub(crate) fn batch_effects(
             .batch_descriptor_buffer
             .push(render_batch_descriptor) as u32;
 
+        // Note that this render batch descriptor has events if necessary.
+        if first_effect_batch
+            .layout_flags
+            .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS)
+        {
+            effects_meta
+                .batch_descriptors_with_events_buffer
+                .push(effect_batch.batch_descriptor_index);
+        }
+
         // Allocate an indirect dispatch arguments struct for this render batch
         effect_batch.update_dispatch_indirect_buffer_row_index =
             effects_meta.update_dispatch_indirect_buffer.allocate();
