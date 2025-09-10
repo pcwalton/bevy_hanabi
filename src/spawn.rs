@@ -856,7 +856,7 @@ impl EffectSpawner {
 
         // Extract integral number of particles to spawn this frame, keep remainder for
         // next one
-        count += self.spawn_remainder.floor() as u32 - self.cycle_spawn;
+        count += (self.spawn_remainder.floor() as i32 - self.cycle_spawn as i32).max(0) as u32;
         self.cycle_spawn += count;
         self.spawn_count = count;
 
