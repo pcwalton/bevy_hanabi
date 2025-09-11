@@ -734,6 +734,8 @@ impl AttributeInner {
         &AttributeInner::new(Cow::Borrowed("pad4"), Value::Scalar(ScalarValue::Uint(0)));
     pub(crate) const PAD5: &'static AttributeInner =
         &AttributeInner::new(Cow::Borrowed("pad5"), Value::Scalar(ScalarValue::Uint(0)));
+    pub(crate) const PAD6: &'static AttributeInner =
+        &AttributeInner::new(Cow::Borrowed("pad6"), Value::Scalar(ScalarValue::Uint(0)));
 
     #[inline]
     pub(crate) const fn new(name: Cow<'static, str>, default_value: Value) -> Self {
@@ -1503,6 +1505,7 @@ impl Attribute {
     pub(crate) const PAD3: Attribute = Attribute(AttributeInner::PAD3);
     pub(crate) const PAD4: Attribute = Attribute(AttributeInner::PAD4);
     pub(crate) const PAD5: Attribute = Attribute(AttributeInner::PAD5);
+    pub(crate) const PAD6: Attribute = Attribute(AttributeInner::PAD6);
 
     /// Retrieve an attribute by its name.
     ///
@@ -1639,6 +1642,7 @@ impl ParticleLayoutBuilder {
             Attribute::PAD3,
             Attribute::PAD4,
             Attribute::PAD5,
+            Attribute::PAD6,
         ];
         let mut next_pad = 0;
 
