@@ -115,6 +115,7 @@ const EM_OFFSET_MAX_UPDATE: u32 = 6u;
 const EM_OFFSET_DEAD_COUNT: u32 = 7u;
 const EM_OFFSET_MAX_SPAWN: u32 = 8u;
 const EM_OFFSET_PING: u32 = 9u;
+const EM_OFFSET_GLOBAL_CHILD_INDEX: u32 = 10u;
 
 /// Draw indirect parameters for GPU-driven rendering, and additional effect data.
 struct EffectMetadata {
@@ -150,6 +151,8 @@ struct EffectMetadata {
     /// always write into the ping buffer and read from the pong buffer. The buffers
     /// are swapped (ping = 1 - ping) during the indirect dispatch.
     ping: u32,
+    /// For children, global index of the ChildInfo into the shared array.
+    global_child_index: u32,
     /// Index of the [`GpuRenderIndirect`] struct inside the global
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     indirect_render_index: u32,
@@ -161,8 +164,6 @@ struct EffectMetadata {
     /// only unique per parent, not globally. Only available if this effect is a
     /// child of another effect (i.e. if it has a parent).
     local_child_index: u32,
-    /// For children, global index of the ChildInfo into the shared array.
-    global_child_index: u32,
     /// For parents, base index of the their first ChildInfo into the shared array.
     base_child_index: u32,
 

@@ -2,7 +2,8 @@
     ChildInfo, ChildInfoBuffer, SimParams, Spawner,
     EM_OFFSET_ALIVE_COUNT, EM_OFFSET_MAX_UPDATE, EM_OFFSET_DEAD_COUNT,
     EM_OFFSET_MAX_SPAWN, EM_OFFSET_INSTANCE_COUNT,
-    EM_OFFSET_PING, DISPATCH_INDIRECT_STRIDE, EFFECT_METADATA_STRIDE
+    EM_OFFSET_PING, EM_OFFSET_GLOBAL_CHILD_INDEX, DISPATCH_INDIRECT_STRIDE,
+    EFFECT_METADATA_STRIDE
 }
 
 @group(0) @binding(0) var<uniform> sim_params : SimParams;
@@ -22,14 +23,6 @@
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let thread_index = global_invocation_id.x;
-
-#ifdef HAS_GPU_SPAWN_EVENTS
-    // Clear any GPU event. The indexing is safe because there are always less child effects
-    // than there are effects in total, so 'index' will always cover the entire child info array.
-    if (thread_index < arrayLength(&child_info_buffer.rows)) {
-        child_info_buffer.rows[thread_index].event_count = 0;
-    }
-#endif
 
     // Cap at maximum number of effects
     let effect_index = thread_index;
@@ -68,4 +61,14 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // Copy the new pong into the spawner buffer, which will be used during rendering
     // to determine where to read particle indices.
     spawner_buffer[effect_index].render_pong = pong;
+
+#ifdef HAS_GPU_SPAWN_EVENTS
+    // Clear any GPU event. The indexing is safe because there are always less child effects
+    // than there are effects in total, so 'index' will always cover the entire child info array.
+    let global_child_index = effect_metadata_buffer[em_base + EM_OFFSET_GLOBAL_CHILD_INDEX];
+    if (global_child_index != 0xffffffffu) {
+        child_info_buffer.rows[global_child_index].event_count = 0;
+    }
+#endif
+
 }

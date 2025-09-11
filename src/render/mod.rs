@@ -418,6 +418,8 @@ pub struct GpuEffectMetadata {
     /// passes always write into the ping buffer and read from the pong buffer.
     /// The buffers are swapped (ping = 1 - ping) during the indirect dispatch.
     pub ping: u32,
+    /// For children, global index of the ChildInfo into the shared array.
+    pub global_child_index: u32,
     /// Index of the [`GpuRenderIndirect`] struct inside the global
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     pub indirect_render_index: u32,
@@ -429,8 +431,6 @@ pub struct GpuEffectMetadata {
     /// only unique per parent, not globally. Only available if this effect is a
     /// child of another effect (i.e. if it has a parent).
     pub local_child_index: u32,
-    /// For children, global index of the ChildInfo into the shared array.
-    pub global_child_index: u32,
     /// For parents, base index of the their first ChildInfo into the shared
     /// array.
     pub base_child_index: u32,
@@ -3837,7 +3837,7 @@ pub(crate) fn prepare_effects(
         // Global and local indices of this effect as a child of another (parent) effect
         let (global_child_index, local_child_index) = cached_child_info
             .map(|cci| (cci.global_child_index, cci.local_child_index))
-            .unwrap_or_default();
+            .unwrap_or((!0, !0));
 
         // Base index of all children of this (parent) effect
         let base_child_index = cached_parent_info
