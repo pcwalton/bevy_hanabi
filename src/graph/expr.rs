@@ -2165,6 +2165,13 @@ pub enum TernaryOperator {
     /// (1 - t) + y * t`.
     Mix,
 
+    /// Selection (if/then) operator.
+    ///
+    /// `select(if_false, if_true, cond)` returns `if_true` if the condition is
+    /// true and `if_false` otherwise. Component-wise when `cond` is a vector of
+    /// booleans.
+    Select,
+
     /// Smooth stepping operator.
     ///
     /// Returns the smooth Hermitian interpolation between the first and second
@@ -2190,6 +2197,7 @@ impl ToWgslString for TernaryOperator {
     fn to_wgsl_string(&self) -> String {
         match *self {
             TernaryOperator::Mix => "mix".to_string(),
+            TernaryOperator::Select => "select".to_string(),
             TernaryOperator::SmoothStep => "smoothstep".to_string(),
             TernaryOperator::Vec3 => "vec3".to_string(),
         }
