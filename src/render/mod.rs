@@ -30,7 +30,7 @@ use bevy::{
         prelude::*,
         system::{lifetimeless::*, SystemParam, SystemState},
     },
-    log::trace,
+    log::{info, trace},
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{
@@ -66,8 +66,8 @@ use crate::{
     calc_func_id,
     render::{
         batch::{
-            EffectBatchKey, EffectDrawBatch, EffectInstanceIndex, EffectSorter, EffectToBeSorted,
-            InitAndUpdatePipelineIds, InstanceInput,
+            ChildEventBuffer, EffectBatchKey, EffectDrawBatch, EffectInstanceIndex, EffectSorter,
+            EffectToBeSorted, InitAndUpdatePipelineIds, InstanceInput,
         },
         effect_cache::DispatchBufferIndices,
         event::GpuBatchEffectIndices,
@@ -2914,9 +2914,7 @@ pub(crate) fn resolve_parents(
     effect_cache: Res<EffectCache>,
     mut q_parent_effects: Query<(Entity, &mut CachedParentInfo), With<CachedEffect>>,
     mut event_cache: ResMut<EventCache>,
-    mut children_from_parent: Local<
-        HashMap<Entity, (Vec<(Entity, BufferBindingSource)>, Vec<GpuChildInfo>)>,
-    >,
+    mut children_from_parent: Local<HashMap<Entity, (Vec<ChildEventBuffer>, Vec<GpuChildInfo>)>>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("resolve_parents").entered();
@@ -3001,7 +2999,11 @@ pub(crate) fn resolve_parents(
         // Push the child entity into the children list
         let (child_vec, child_infos) = children_from_parent.entry(parent_entity).or_default();
         let local_child_index = child_vec.len() as u32;
-        child_vec.push((child_entity, child_buffer_binding_source));
+        child_vec.push(ChildEventBuffer {
+            entity: child_entity,
+            buffer_binding_source: child_buffer_binding_source,
+            buffer_index: cached_effect_events.buffer_index,
+        });
         child_infos.push(GpuChildInfo {
             event_count: 0,
             spawn_event_offset: cached_effect_events.range.start,
@@ -3070,8 +3072,10 @@ pub(crate) fn resolve_parents(
             cached_parent_info
                 .children
                 .iter()
-                .map(|(entity, _)| *entity),
-            children.iter().map(|(entity, _)| *entity),
+                .map(|child_event_buffer| child_event_buffer.entity),
+            children
+                .iter()
+                .map(|child_event_buffer| child_event_buffer.entity),
         ) {
             continue;
         }
@@ -3127,7 +3131,11 @@ pub fn fixup_parents(
             parent_entity,
             base_index
         );
-        for (child_entity, _) in &cached_parent_info.children {
+        for ChildEventBuffer {
+            entity: child_entity,
+            ..
+        } in &cached_parent_info.children
+        {
             let Ok(mut cached_child_info) = q_children.get_mut(*child_entity) else {
                 continue;
             };
@@ -4119,6 +4127,10 @@ pub(crate) fn batch_effects(
             .entry(EffectBatchKey::new(
                 effect_instance.handle.id(),
                 effect_instance.buffer_index,
+                effect_instance
+                    .child_event_buffers
+                    .iter()
+                    .map(|child_event_buffer| child_event_buffer.buffer_index),
             ))
             .or_insert_with(default)
             .effect_instance_indices
@@ -4806,7 +4818,7 @@ impl EffectBindGroups {
         render_batch_effect_index_buffer: &Buffer,
         effect_metadata_buffer: &Buffer,
         child_info_buffer: Option<&Buffer>,
-        event_buffers: &[(Entity, BufferBindingSource)],
+        event_buffers: &[ChildEventBuffer],
     ) -> Result<&BindGroup, ()> {
         let DispatchBufferIndices {
             effect_metadata_buffer_table_id,
@@ -4830,7 +4842,7 @@ impl EffectBindGroups {
 
         let event_buffers_keys = event_buffers
             .iter()
-            .map(|(_, buffer_binding_source)| buffer_binding_source.buffer.id())
+            .map(|child_event_buffer| child_event_buffer.buffer_binding_source.buffer.id())
             .collect::<Vec<_>>();
 
         let key = UpdateMetadataBindGroupKey {
@@ -4886,13 +4898,14 @@ impl EffectBindGroups {
                     }),
                 });
 
-                for (index, (_, buffer_binding_source)) in event_buffers.iter().enumerate() {
+                for (index, child_event_buffer) in event_buffers.iter().enumerate() {
                     // @group(3) @binding(4+N) var<storage, read_write> event_buffer_N :
                     // EventBuffer;
                     // FIXME - BufferBindingSource originally was for Events, counting in u32, but
                     // then moved to counting in bytes, so now need some conversion. Need to review
                     // all of this...
-                    let buffer_binding: BufferBinding = buffer_binding_source.into();
+                    let buffer_binding: BufferBinding =
+                        (&child_event_buffer.buffer_binding_source).into();
                     entries.push(BindGroupEntry {
                         binding: 4 + index as u32,
                         resource: BindingResource::Buffer(BufferBinding {
@@ -7219,7 +7232,9 @@ impl Node for VfxSimulateNode {
                         event_buffers_keys: representative_effect_instance
                             .child_event_buffers
                             .iter()
-                            .map(|(_, buffer_binding_source)| buffer_binding_source.buffer.id())
+                            .map(|child_event_buffer| {
+                                child_event_buffer.buffer_binding_source.buffer.id()
+                            })
                             .collect(),
                     },
                 ) else {

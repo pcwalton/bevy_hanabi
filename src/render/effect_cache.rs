@@ -7,7 +7,7 @@ use std::{
 use bevy::{
     asset::Handle,
     ecs::{component::Component, resource::Resource},
-    log::{trace, warn},
+    log::{info, trace, warn},
     platform::collections::HashMap,
     render::{render_resource::*, renderer::RenderDevice},
     utils::default,

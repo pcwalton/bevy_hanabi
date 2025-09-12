@@ -27,7 +27,7 @@ use super::{
     aligned_buffer_vec::HybridAlignedBufferVec, effect_cache::BufferState, BufferBindingSource,
     EffectBindGroups, GpuDispatchIndirect,
 };
-use crate::ParticleLayout;
+use crate::{render::batch::ChildEventBuffer, ParticleLayout};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EventSlice {
@@ -145,7 +145,7 @@ impl EventBuffer {
 pub(crate) struct CachedParentInfo {
     /// Render world entities of the child effects, and their associated event
     /// buffer binding source.
-    pub children: Vec<(Entity, BufferBindingSource)>,
+    pub children: Vec<ChildEventBuffer>,
     /// Indices in bytes into the global [`EffectCache::child_infos_buffer`] of
     /// the [`GpuChildInfo`]s for all the child effects of this parent effect.
     /// The child effects are always allocated as a single contiguous block,
@@ -461,7 +461,7 @@ impl EventCache {
     pub fn allocate_child_infos(
         &mut self,
         parent_entity: Entity,
-        children: Vec<(Entity, BufferBindingSource)>,
+        children: Vec<ChildEventBuffer>,
         child_infos: &[GpuChildInfo],
     ) -> CachedParentInfo {
         assert_eq!(children.len(), child_infos.len());
@@ -486,7 +486,7 @@ impl EventCache {
     pub fn reallocate_child_infos(
         &mut self,
         parent_entity: Entity,
-        children: Vec<(Entity, BufferBindingSource)>,
+        children: Vec<ChildEventBuffer>,
         child_infos: &[GpuChildInfo],
         cached_parent_info: &mut CachedParentInfo,
     ) {

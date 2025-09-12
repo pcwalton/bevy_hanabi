@@ -74,6 +74,7 @@ wgpu = { version = "24", default-features = false, features = [
 naga = { version = "24", features = ["wgsl-in"] }
 naga_oil = { version = "0.17", default-features = false, features = ["test_shader"] }
 indexmap = "2"
+smallvec = "1"
 
 [dependencies.bevy]
 version = "0.16"

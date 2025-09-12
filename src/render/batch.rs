@@ -7,6 +7,7 @@ use bevy::{
 };
 use fixedbitset::FixedBitSet;
 use indexmap::IndexMap;
+use smallvec::SmallVec;
 
 use super::{
     effect_cache::{DispatchBufferIndices, EffectSlice},
@@ -61,7 +62,7 @@ pub(crate) struct EffectInstance {
     pub parent_min_binding_size: Option<NonZeroU32>,
     pub parent_binding_source: Option<BufferBindingSource>,
     /// Event buffers of child effects, if any.
-    pub child_event_buffers: Vec<(Entity, BufferBindingSource)>,
+    pub child_event_buffers: Vec<ChildEventBuffer>,
     /// Index of the property buffer, if any.
     pub property_key: Option<PropertyBindGroupKey>,
     /// Index of the first [`GpuSpawnerParams`] entry of the effects in the
@@ -95,6 +96,13 @@ pub(crate) struct EffectInstance {
     pub main_entity: MainEntity,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ChildEventBuffer {
+    pub(crate) entity: Entity,
+    pub(crate) buffer_binding_source: BufferBindingSource,
+    pub(crate) buffer_index: u32,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EffectInstanceIndex(pub u32);
 
@@ -113,10 +121,11 @@ pub(crate) struct SortedEffects {
 }
 
 /// Identifies effect batches.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct EffectBatchKey {
     asset_id: AssetId<EffectAsset>,
-    buffer_index: u32,
+    particle_buffer_index: u32,
+    child_event_buffer_indices: SmallVec<[u32; 4]>,
 }
 
 /// Information about a single batched set of effects.
@@ -173,10 +182,15 @@ impl SortedEffects {
 }
 
 impl EffectBatchKey {
-    pub(crate) fn new(asset_id: AssetId<EffectAsset>, buffer_index: u32) -> EffectBatchKey {
+    pub(crate) fn new(
+        asset_id: AssetId<EffectAsset>,
+        particle_buffer_index: u32,
+        child_event_buffer_indices: impl Iterator<Item = u32>,
+    ) -> EffectBatchKey {
         EffectBatchKey {
             asset_id,
-            buffer_index,
+            particle_buffer_index,
+            child_event_buffer_indices: child_event_buffer_indices.collect(),
         }
     }
 }
@@ -395,7 +409,7 @@ pub(crate) struct InstanceInput {
     /// Index of the event buffer, if this effect consumes GPU spawn events.
     pub event_buffer_index: Option<u32>,
     /// Child effects, if any.
-    pub child_effects: Vec<(Entity, BufferBindingSource)>,
+    pub child_effects: Vec<ChildEventBuffer>,
     /// Various flags related to the effect.
     pub layout_flags: LayoutFlags,
     /// Texture layout.
