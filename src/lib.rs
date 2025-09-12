@@ -212,6 +212,7 @@ mod test_utils;
 
 pub use asset::{
     AlphaMode, DefaultMesh, EffectAsset, EffectParent, MotionIntegration, SimulationCondition,
+    Transmissiveness,
 };
 pub use attributes::*;
 pub use gradient::{Gradient, GradientKey};
@@ -996,6 +997,12 @@ fn append_spawn_events_{0}(effect_metadata_index: u32, particle_index: u32, coun
             AlphaMode::Opaque => layout_flags.insert(LayoutFlags::OPAQUE),
             _ => layout_flags.remove(LayoutFlags::USE_ALPHA_MASK | LayoutFlags::OPAQUE),
         }
+
+        let transmissive = asset
+            .render_modifiers()
+            .any(|render_modifier| render_modifier.reads_view_transmission_texture());
+        layout_flags.set(LayoutFlags::TRANSMISSIVE, transmissive);
+
         if particle_layout.contains(Attribute::RIBBON_ID) {
             layout_flags |= LayoutFlags::RIBBONS;
         }

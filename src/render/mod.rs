@@ -10,15 +10,18 @@ use std::{
 
 #[cfg(feature = "2d")]
 use bevy::core_pipeline::core_2d::{Transparent2d, CORE_2D_DEPTH_FORMAT};
-use bevy::ecs::entity::EntityHashSet;
 #[cfg(feature = "2d")]
 use bevy::math::FloatOrd;
+use bevy::{
+    core_pipeline::core_3d::ViewTransmissionTexture,
+    ecs::entity::{EntityHashMap, EntityHashSet},
+};
 #[cfg(feature = "3d")]
 use bevy::{
     core_pipeline::{
         core_3d::{
-            AlphaMask3d, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey, Transparent3d,
-            CORE_3D_DEPTH_FORMAT,
+            AlphaMask3d, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey, Transmissive3d,
+            Transparent3d, CORE_3D_DEPTH_FORMAT,
         },
         prepass::{OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey},
     },
@@ -1435,6 +1438,7 @@ impl FromWorld for RenderBatchPipeline {
 pub(crate) struct ParticlesRenderPipeline {
     render_device: RenderDevice,
     view_layout: BindGroupLayout,
+    view_transmissive_layout: BindGroupLayout,
     effect_metadata_bind_group_layout: BindGroupLayout,
     material_layouts: HashMap<TextureLayout, BindGroupLayout>,
 }
@@ -1533,6 +1537,54 @@ impl FromWorld for ParticlesRenderPipeline {
             ],
         );
 
+        let view_transmissive_layout = render_device.create_bind_group_layout(
+            "hanabi:bind_group_layout:render:view_transmissive@0",
+            &[
+                // @group(0) @binding(0) var<uniform> view: View;
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(ViewUniform::min_size()),
+                    },
+                    count: None,
+                },
+                // @group(0) @binding(1) var<uniform> sim_params : SimParams;
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(GpuSimParams::min_size()),
+                    },
+                    count: None,
+                },
+                // @group(0) @binding(2) var view_transmission_texture :
+                // texture_2d<f32>;
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // @group(0) @binding(3) var view_transmission_sampler :
+                // sampler;
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        );
+
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
         let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
         let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
@@ -1582,6 +1634,7 @@ impl FromWorld for ParticlesRenderPipeline {
         Self {
             render_device: render_device.clone(),
             view_layout,
+            view_transmissive_layout,
             effect_metadata_bind_group_layout,
             material_layouts: default(),
         }
@@ -1651,6 +1704,9 @@ pub(crate) enum ParticleRenderAlphaMaskPipelineKey {
     /// Key: OPAQUE
     /// The effect is rendered fully-opaquely.
     Opaque,
+    /// Key: TRANSMISSIVE
+    /// The effect is rendered in the transmissive pass.
+    Transmissive,
 }
 
 impl Default for ParticleRenderPipelineKey {
@@ -1727,11 +1783,15 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
             .render_device
             .create_bind_group_layout("hanabi:bind_group_layout:render:particle@1", &entries[..]);
 
-        let mut layout = vec![
-            self.view_layout.clone(),
-            particle_bind_group_layout,
-            self.effect_metadata_bind_group_layout.clone(),
-        ];
+        let mut layout = vec![];
+        if key.alpha_mask == ParticleRenderAlphaMaskPipelineKey::Transmissive {
+            layout.push(self.view_transmissive_layout.clone());
+        } else {
+            layout.push(self.view_layout.clone());
+        }
+        layout.push(particle_bind_group_layout);
+        layout.push(self.effect_metadata_bind_group_layout.clone());
+
         let mut shader_defs = vec![];
 
         let vertex_buffer_layout = key.mesh_layout.as_ref().and_then(|mesh_layout| {
@@ -1764,6 +1824,10 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
             ParticleRenderAlphaMaskPipelineKey::Opaque => {
                 // Key: OPAQUE
                 shader_defs.push("OPAQUE".into())
+            }
+            ParticleRenderAlphaMaskPipelineKey::Transmissive => {
+                // Key: TRANSMISSIVE
+                shader_defs.push("TRANSMISSIVE".into())
             }
         }
 
@@ -2374,6 +2438,9 @@ pub struct EffectsMeta {
     /// Bind group for the camera view, containing the camera projection and
     /// other uniform values related to the camera.
     view_bind_group: Option<BindGroup>,
+    /// Maps each camera view render entity to the transmissive view bind group
+    /// for that camera.
+    view_transmissive_bind_groups: EntityHashMap<BindGroup>,
     /// Bind group #0 of the vfx_indirect shader, for the simulation parameters
     /// like the current time and frame delta time.
     indirect_sim_params_bind_group: Option<BindGroup>,
@@ -2447,6 +2514,7 @@ impl EffectsMeta {
 
         Self {
             view_bind_group: None,
+            view_transmissive_bind_groups: EntityHashMap::default(),
             indirect_sim_params_bind_group: None,
             indirect_metadata_bind_group: None,
             indirect_spawner_bind_group: None,
@@ -2713,6 +2781,8 @@ bitflags! {
         const READ_PARENT_PARTICLE = (1 << 11);
         /// The effect access to the particle data in the fragment shader.
         const NEEDS_PARTICLE_FRAGMENT = (1 << 12);
+        /// The effect has a transmissive material.
+        const TRANSMISSIVE = (1 << 13);
     }
 }
 
@@ -5074,6 +5144,8 @@ pub struct QueueEffectsReadOnlyParams<'w, 's> {
     draw_functions_alpha_mask: Res<'w, DrawFunctions<AlphaMask3d>>,
     #[cfg(feature = "3d")]
     draw_functions_opaque: Res<'w, DrawFunctions<Opaque3d>>,
+    #[cfg(feature = "3d")]
+    draw_functions_transmissive: Res<'w, DrawFunctions<Transmissive3d>>,
     marker: PhantomData<&'s usize>,
 }
 
@@ -5088,6 +5160,7 @@ fn emit_sorted_draw<T, F>(
     render_meshes: &RenderAssets<RenderMesh>,
     pipeline_cache: &PipelineCache,
     make_phase_item: F,
+    transmissive: bool,
     #[cfg(all(feature = "2d", feature = "3d"))] pipeline_mode: PipelineMode,
 ) where
     T: SortedPhaseItem,
@@ -5154,6 +5227,21 @@ fn emit_sorted_draw<T, F>(
                 .intersects(LayoutFlags::USE_ALPHA_MASK | LayoutFlags::OPAQUE)
             {
                 trace!("Non-transparent batch. Skipped.");
+                continue;
+            }
+
+            // If this is the transmissive pass, make sure we're only rendering
+            // transmissive objects, or vice versa.
+            let effect_is_transmissive = effect_instance
+                .layout_flags
+                .contains(LayoutFlags::TRANSMISSIVE);
+            if transmissive != effect_is_transmissive {
+                trace!(
+                    "Not rendering because the current pass doesn't match the effect's \
+                    transmissiveness (pass: {:?}, effect: {:?})",
+                    transmissive,
+                    effect_is_transmissive,
+                );
                 continue;
             }
 
@@ -5473,9 +5561,10 @@ pub(crate) fn queue_effects(
     #[cfg(feature = "2d")] mut transparent_2d_render_phases: ResMut<
         ViewSortedRenderPhases<Transparent2d>,
     >,
-    #[cfg(feature = "3d")] mut transparent_3d_render_phases: ResMut<
-        ViewSortedRenderPhases<Transparent3d>,
-    >,
+    #[cfg(feature = "3d")] (mut transparent_3d_render_phases, mut transmissive_3d_render_phases): (
+        ResMut<ViewSortedRenderPhases<Transparent3d>>,
+        ResMut<ViewSortedRenderPhases<Transmissive3d>>,
+    ),
     #[cfg(feature = "3d")] (mut opaque_3d_render_phases, mut alpha_mask_3d_render_phases): (
         ResMut<ViewBinnedRenderPhases<Opaque3d>>,
         ResMut<ViewBinnedRenderPhases<AlphaMask3d>>,
@@ -5550,6 +5639,7 @@ pub(crate) fn queue_effects(
                     extra_index: PhaseItemExtraIndex::None,
                     indexed: true, // ???
                 },
+                /*transmissive=*/ false,
                 #[cfg(feature = "3d")]
                 PipelineMode::Camera2d,
             );
@@ -5591,8 +5681,48 @@ pub(crate) fn queue_effects(
                     draw_function: draw_effects_function_3d,
                     batch_range: 0..1,
                     extra_index: PhaseItemExtraIndex::None,
-                    indexed: true, // ???
+                    indexed: true, // FIXME: This depends on the mesh.
                 },
+                /*transmissive=*/ false,
+                #[cfg(feature = "2d")]
+                PipelineMode::Camera3d,
+            );
+        }
+
+        // Transmissive effects
+        if !views.is_empty() {
+            use bevy::core_pipeline::core_3d::Transmissive3d;
+
+            trace!("Emit effect draw calls for transmissive 3D views...");
+
+            let draw_effects_function_transmissive = read_params
+                .draw_functions_transmissive
+                .read()
+                .get_id::<DrawEffects>()
+                .unwrap();
+
+            emit_sorted_draw(
+                &views,
+                &mut transmissive_3d_render_phases,
+                &mut view_entities,
+                &sorted_effect_batches,
+                &effect_draw_batches,
+                &mut render_pipeline,
+                specialized_render_pipelines.reborrow(),
+                &render_meshes,
+                &pipeline_cache,
+                |id, entity, batch, view| Transmissive3d {
+                    distance: view
+                        .rangefinder3d()
+                        .distance_translation(&batch.representative_translation),
+                    pipeline: id,
+                    entity,
+                    draw_function: draw_effects_function_transmissive,
+                    batch_range: 0..1,
+                    extra_index: PhaseItemExtraIndex::None,
+                    indexed: true, // FIXME: This depends on the mesh.
+                },
+                /*transmissive=*/ true,
                 #[cfg(feature = "2d")]
                 PipelineMode::Camera3d,
             );
@@ -5689,6 +5819,7 @@ pub(crate) fn queue_effects(
 /// Bevy has updated the [`ViewUniforms`], which need to be referenced to get
 /// access to the current camera view.
 pub(crate) fn prepare_gpu_resources(
+    q_views: Query<(Entity, &ViewUniformOffset, &ViewTransmissionTexture), With<ExtractedView>>,
     mut effects_meta: ResMut<EffectsMeta>,
     //mut effect_cache: ResMut<EffectCache>,
     mut event_cache: ResMut<EventCache>,
@@ -5701,7 +5832,10 @@ pub(crate) fn prepare_gpu_resources(
     // Get the binding for the ViewUniform, the uniform data structure containing
     // the Camera data for the current view. If not available, we cannot render
     // anything.
-    let Some(view_binding) = view_uniforms.uniforms.binding() else {
+    let (Some(view_buffer), Some(view_binding)) = (
+        view_uniforms.uniforms.buffer(),
+        view_uniforms.uniforms.binding(),
+    ) else {
         return;
     };
 
@@ -5721,6 +5855,40 @@ pub(crate) fn prepare_gpu_resources(
             },
         ],
     ));
+
+    // Create the transmissive bind groups for all views.
+    effects_meta.view_transmissive_bind_groups.clear();
+    for (view, view_uniform_offset, view_transmission_texture) in &q_views {
+        let view_transmissive_bind_group = render_device.create_bind_group(
+            "hanabi:bind_group_camera_view_transmissive",
+            &render_pipeline.view_transmissive_layout,
+            &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: view_buffer,
+                        offset: view_uniform_offset.offset as u64,
+                        size: Some(ViewUniform::min_size()),
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: effects_meta.sim_params_uniforms.binding().unwrap(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&view_transmission_texture.view),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Sampler(&view_transmission_texture.sampler),
+                },
+            ],
+        );
+        effects_meta
+            .view_transmissive_bind_groups
+            .insert(view, view_transmissive_bind_group);
+    }
 
     // Re-/allocate any GPU buffer if needed
     //effect_cache.prepare_buffers(&render_device, &render_queue, &mut
@@ -6502,11 +6670,19 @@ fn draw<'w>(
     pass.set_vertex_buffer(0, vertex_buffer_slice.buffer.slice(..));
 
     // View properties (camera matrix, etc.)
-    pass.set_bind_group(
-        0,
-        effects_meta.view_bind_group.as_ref().unwrap(),
-        &[view_uniform.offset],
-    );
+    if effect_instance
+        .layout_flags
+        .contains(LayoutFlags::TRANSMISSIVE)
+    {
+        let Some(view_bind_group) = effects_meta.view_transmissive_bind_groups.get(&view) else {
+            error!("No transmissive bind group available for view {:?}", view);
+            return;
+        };
+        pass.set_bind_group(0, view_bind_group, &[]);
+    } else {
+        let view_bind_group = effects_meta.view_bind_group.as_ref().unwrap();
+        pass.set_bind_group(0, view_bind_group, &[view_uniform.offset]);
+    };
 
     // Particles buffer
     let spawner_buffer_aligned = effects_meta.spawner_buffer.aligned_size();
@@ -6645,6 +6821,28 @@ impl Draw<Transparent3d> for DrawEffects {
         item: &Transparent3d,
     ) -> Result<(), DrawError> {
         trace!("Draw<Transparent3d>: view={:?}", view);
+        draw(
+            world,
+            pass,
+            view,
+            item.entity,
+            item.pipeline,
+            &mut self.params,
+        );
+        Ok(())
+    }
+}
+
+#[cfg(feature = "3d")]
+impl Draw<Transmissive3d> for DrawEffects {
+    fn draw<'w>(
+        &mut self,
+        world: &'w World,
+        pass: &mut TrackedRenderPass<'w>,
+        view: Entity,
+        item: &Transmissive3d,
+    ) -> Result<(), DrawError> {
+        trace!("Draw<Transmissive3d>: view={:?}", view);
         draw(
             world,
             pass,
@@ -7660,7 +7858,9 @@ fn prepare_to_dispatch_init_job(
 
 impl From<LayoutFlags> for ParticleRenderAlphaMaskPipelineKey {
     fn from(layout_flags: LayoutFlags) -> Self {
-        if layout_flags.contains(LayoutFlags::USE_ALPHA_MASK) {
+        if layout_flags.contains(LayoutFlags::TRANSMISSIVE) {
+            ParticleRenderAlphaMaskPipelineKey::Transmissive
+        } else if layout_flags.contains(LayoutFlags::USE_ALPHA_MASK) {
             ParticleRenderAlphaMaskPipelineKey::AlphaMask
         } else if layout_flags.contains(LayoutFlags::OPAQUE) {
             ParticleRenderAlphaMaskPipelineKey::Opaque

@@ -235,6 +235,17 @@ impl From<AlphaMode> for BlendState {
     }
 }
 
+/// Whether the particles are transmissive.
+#[derive(Clone, Copy, Default, Reflect)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum Transmissiveness {
+    /// The particles are non-transmissive.
+    #[default]
+    NonTransmissive,
+    /// The particles are transmissive.
+    Transmissive,
+}
+
 /// Default particle mesh, if not otherwise specified in [`EffectAsset::mesh`].
 ///
 /// This defaults to a unit quad facing the Z axis.

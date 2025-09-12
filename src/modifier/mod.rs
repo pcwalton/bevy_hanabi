@@ -562,6 +562,12 @@ pub trait RenderModifier: Modifier {
 
     /// Upcast to [`Modifier`] trait.
     fn as_modifier(&self) -> &dyn Modifier;
+
+    /// Returns true if this modifier requires that the effect run in the
+    /// transmissive pass.
+    fn reads_view_transmission_texture(&self) -> bool {
+        false
+    }
 }
 
 impl Clone for Box<dyn RenderModifier> {

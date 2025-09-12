@@ -27,8 +27,13 @@ struct VertexOutput {
     @location(3) particle_index: u32,
 #endif
 }
+
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<uniform> sim_params : SimParams;
+#ifdef TRANSMISSIVE
+@group(0) @binding(2) var view_transmission_texture : texture_2d<f32>;
+@group(0) @binding(3) var view_transmission_sampler : sampler;
+#endif  // TRANSMISSIVE
 
 @group(1) @binding(0) var<storage, read> particle_buffer : ParticleBuffer;
 @group(1) @binding(1) var<storage, read> indirect_buffer : IndirectBuffer;

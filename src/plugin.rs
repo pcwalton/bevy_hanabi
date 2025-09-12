@@ -547,10 +547,20 @@ impl Plugin for HanabiPlugin {
         }
         #[cfg(feature = "3d")]
         {
+            use bevy::core_pipeline::core_3d::Transmissive3d;
+
             let draw_particles = DrawEffects::new(render_app.world_mut());
             render_app
                 .world()
                 .get_resource::<DrawFunctions<Transparent3d>>()
+                .unwrap()
+                .write()
+                .add(draw_particles);
+
+            let draw_particles = DrawEffects::new(render_app.world_mut());
+            render_app
+                .world()
+                .get_resource::<DrawFunctions<Transmissive3d>>()
                 .unwrap()
                 .write()
                 .add(draw_particles);
