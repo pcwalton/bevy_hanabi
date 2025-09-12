@@ -601,7 +601,7 @@ impl RenderModifier for OrientModifier {
                 if let Some(rotation) = self.rotation {
                     let rotation = context.eval(module, rotation)?;
                     context.vertex_code += &format!(
-                        r#"let cam_rot = get_camera_rotation_effect_space();
+                        r#"let cam_rot = get_camera_rotation_effect_space(spawner_index);
 let particle_rot_in_cam_space = {};
 let particle_rot_in_cam_space_cos = cos(particle_rot_in_cam_space);
 let particle_rot_in_cam_space_sin = sin(particle_rot_in_cam_space);
@@ -612,7 +612,7 @@ axis_z = cam_rot[2].xyz;
                         rotation
                     );
                 } else {
-                    context.vertex_code += r#"let cam_rot = get_camera_rotation_effect_space();
+                    context.vertex_code += r#"let cam_rot = get_camera_rotation_effect_space(spawner_index);
 axis_x = cam_rot[0].xyz;
 axis_y = cam_rot[1].xyz;
 axis_z = cam_rot[2].xyz;
