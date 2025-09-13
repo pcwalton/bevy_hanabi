@@ -1964,6 +1964,13 @@ pub enum BinaryOperator {
     /// vector type operands. Always produce a scalar floating-point result.
     Dot,
 
+    /// Equals operator.
+    ///
+    /// Returns `true` if the left operand is equal to the right operand. Only
+    /// valid for numeric types. If the operands are vectors, they must be of
+    /// the same rank, and the result is a bool vector of that rank.
+    Equal,
+
     /// Greater-than operator.
     ///
     /// Returns `true` if the left operand is strictly greater than the right
@@ -2016,6 +2023,13 @@ pub enum BinaryOperator {
     ///
     /// Returns the product of its operands. Only valid for numeric operands.
     Mul,
+
+    /// Not-equals operator.
+    ///
+    /// Returns `true` if the left operand is not equal to the right operand.
+    /// Only valid for numeric types. If the operands are vectors, they must be
+    /// of /// the same rank, and the result is a bool vector of that rank.
+    NotEqual,
 
     /// Remainder operator.
     ///
@@ -2084,11 +2098,13 @@ impl BinaryOperator {
         match *self {
             BinaryOperator::Add
             | BinaryOperator::Div
+            | BinaryOperator::Equal
             | BinaryOperator::GreaterThan
             | BinaryOperator::GreaterThanOrEqual
             | BinaryOperator::LessThan
             | BinaryOperator::LessThanOrEqual
             | BinaryOperator::Mul
+            | BinaryOperator::NotEqual
             | BinaryOperator::Remainder
             | BinaryOperator::Sub => false,
             BinaryOperator::Atan2
@@ -2129,6 +2145,7 @@ impl ToWgslString for BinaryOperator {
             BinaryOperator::Distance => "distance".to_string(),
             BinaryOperator::Div => "/".to_string(),
             BinaryOperator::Dot => "dot".to_string(),
+            BinaryOperator::Equal => "==".to_string(),
             BinaryOperator::GreaterThan => ">".to_string(),
             BinaryOperator::GreaterThanOrEqual => ">=".to_string(),
             BinaryOperator::LessThan => "<".to_string(),
@@ -2136,6 +2153,7 @@ impl ToWgslString for BinaryOperator {
             BinaryOperator::Max => "max".to_string(),
             BinaryOperator::Min => "min".to_string(),
             BinaryOperator::Mul => "*".to_string(),
+            BinaryOperator::NotEqual => "!=".to_string(),
             BinaryOperator::Remainder => "%".to_string(),
             BinaryOperator::Step => "step".to_string(),
             BinaryOperator::Sub => "-".to_string(),
