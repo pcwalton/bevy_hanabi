@@ -4114,7 +4114,7 @@ pub(crate) fn batch_effects(
             cached_effect_events,
             cached_child_info,
             cached_properties,
-            mut dispatch_buffer_indices,
+            dispatch_buffer_indices,
             mut input,
         )) = q_cached_effects.get_mut(entity)
         else {
