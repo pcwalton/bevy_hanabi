@@ -23,8 +23,7 @@ struct EffectSortMetadataAtomic {
     last_sort_buffer_index: atomic<u32>,
     // Index of the `IndirectDispatch` array in `dispatch_indirect_buffer`.
     indirect_command_index: u32,
-
-    {{EFFECT_SORT_METADATA_PADDING}}
+    pad: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> sort_buffer : array<KeyValuePair>;
@@ -43,10 +42,13 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let thread_index = global_invocation_id.x;
 
     var effect_metadata_index = 0u;
+    var effect_sort_metadata_index = 0u;
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
     var instance_index = thread_index;
     while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
         effect_metadata_index = batch_effect_indices[effect_index_offset].effect_metadata_index;
+        effect_sort_metadata_index =
+            batch_effect_indices[effect_index_offset].effect_sort_metadata_index;
         // FIXME: This shouldn't be atomic.
         let effect_instance_count =
             atomicLoad(&effect_metadata[effect_metadata_index].instance_count);
@@ -69,7 +71,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let key_offset = particle_offset + effect_metadata[effect_metadata_index].sort_key_offset;
     let key2_offset = particle_offset + effect_metadata[effect_metadata_index].sort_key2_offset;
 
-    let effect_sort_metadata_index = effect_metadata[effect_metadata_index].sort_metadata_index;
     let pair_index =
         atomicAdd(&effect_sort_metadata[effect_sort_metadata_index].last_sort_buffer_index, 1u);
 

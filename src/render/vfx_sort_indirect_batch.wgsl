@@ -25,16 +25,18 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         batch_descriptors[batch_descriptor_index].last_batch_effect_index_offset;
 
     var effect_metadata_index = 0u;
+    var effect_sort_metadata_index = 0u;
     var total_instance_count = 0u;
     for (var batch_effect_index_offset = first_batch_effect_index_offset;
             batch_effect_index_offset < last_batch_effect_index_offset;
             batch_effect_index_offset += 1u) {
         effect_metadata_index =
             batch_effect_indices[batch_effect_index_offset].effect_metadata_index;
+        effect_sort_metadata_index =
+            batch_effect_indices[batch_effect_index_offset].effect_sort_metadata_index;
         total_instance_count += effect_metadata[effect_metadata_index].instance_count;
     }
 
-    let effect_sort_metadata_index = effect_metadata[effect_metadata_index].sort_metadata_index;
     let indirect_command_index =
         effect_sort_metadata[effect_sort_metadata_index].indirect_command_index;
 

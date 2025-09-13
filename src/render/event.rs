@@ -212,7 +212,9 @@ pub struct GpuChildInfo {
 #[derive(Debug, Default, Clone, Copy, Pod, Zeroable, ShaderType)]
 pub struct GpuBatchEffectIndices {
     pub effect_metadata_index: u32,
+    pub effect_sort_metadata_index: u32,
     pub spawner_index: u32,
+    pub pad: u32,
 }
 
 #[derive(Debug, Clone, Component)]

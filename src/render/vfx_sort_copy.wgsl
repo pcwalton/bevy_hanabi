@@ -31,10 +31,13 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let thread_index = global_invocation_id.x;
 
     var effect_metadata_index = 0u;
+    var effect_sort_metadata_index = 0u;
     var effect_index_offset = batch_descriptor.first_batch_effect_index_offset;
     var row_index = thread_index;
     while (effect_index_offset < batch_descriptor.last_batch_effect_index_offset) {
         effect_metadata_index = batch_effect_indices[effect_index_offset].effect_metadata_index;
+        effect_sort_metadata_index =
+            batch_effect_indices[effect_index_offset].effect_sort_metadata_index;
         // FIXME: This shouldn't be atomic.
         let effect_instance_count =
             atomicLoad(&effect_metadata[effect_metadata_index].instance_count);
@@ -48,7 +51,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         return;
     }
 
-    let effect_sort_metadata_index = effect_metadata[effect_metadata_index].sort_metadata_index;
     let first_sort_buffer_index =
         effect_sort_metadata[effect_sort_metadata_index].first_sort_buffer_index;
     

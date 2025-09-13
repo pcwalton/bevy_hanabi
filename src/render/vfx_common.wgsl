@@ -99,7 +99,9 @@ const DISPATCH_INDIRECT_STRIDE: u32 = 3u;
 
 struct BatchEffectIndices {
     effect_metadata_index: u32,
+    effect_sort_metadata_index: u32,
     spawner_index: u32,
+    pad: u32,
 }
 
 // Effect metadata offsets. Used when accessing a tightly packed array of EffectMetadata
@@ -156,7 +158,6 @@ struct EffectMetadata {
     /// Index of the [`GpuRenderIndirect`] struct inside the global
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     indirect_render_index: u32,
-    sort_metadata_index: u32,
     properties_index: u32,
     /// Index of this effect into its parent's ChildInfo array
     /// ([`EffectChildren::effect_cache_ids`] and its associated GPU
@@ -227,8 +228,7 @@ struct EffectSortMetadata {
     last_sort_buffer_index: u32,
     // Index of the `IndirectDispatch` array in `dispatch_indirect_buffer`.
     indirect_command_index: u32,
-
-    {{EFFECT_SORT_METADATA_PADDING}}
+    pad: u32,
 }
 
 /// Stride, in u32 count, between elements of an array<EffectMetadata>.

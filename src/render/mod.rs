@@ -426,7 +426,6 @@ pub struct GpuEffectMetadata {
     /// Index of the [`GpuRenderIndirect`] struct inside the global
     /// [`EffectsMeta::render_group_dispatch_buffer`].
     pub indirect_render_index: u32,
-    pub sort_metadata_index: u32,
     pub properties_index: u32,
     /// Index of this effect into its parent's ChildInfo array
     /// ([`EffectChildren::effect_cache_ids`] and its associated GPU
@@ -479,6 +478,7 @@ pub(crate) struct GpuEffectSortMetadata {
     first_sort_buffer_index: u32,
     last_sort_buffer_index: u32,
     indirect_command_index: u32,
+    pad: u32,
 }
 
 #[repr(C)]
@@ -2465,13 +2465,18 @@ pub struct EffectsMeta {
     /// Global shared GPU buffer storing the various `EffectMetadata`
     /// structs for the active effect instances.
     effect_metadata_buffer: BufferTable<GpuEffectMetadata>,
-    effect_sort_metadata_buffer: BufferTable<GpuEffectSortMetadata>,
+    effect_sort_metadata_buffer: RawBufferVec<GpuEffectSortMetadata>,
     total_batch_count: u32,
     render_batch_metadata_buffer: UniformBuffer<GpuRenderBatchMetadata>,
     batch_effect_indices_buffer: RawBufferVec<GpuBatchEffectIndices>,
     batch_descriptor_buffer: AlignedBufferVec<GpuRenderBatchDescriptor>,
     batch_descriptors_requiring_sorting_buffer: RawBufferVec<u32>,
     batch_descriptors_with_events_buffer: RawBufferVec<u32>,
+    /// Stores the indices of every piece of [`GpuEffectSortMetadata`] in the
+    /// [`Self::effect_sort_metadata_buffer`]
+    ///
+    /// `vfx_sort.wgsl` uses this.
+    sort_metadata_indices_buffer: RawBufferVec<u32>,
     total_batches_requiring_sorting_count: u32,
     total_batches_with_events_count: u32,
     indexed_indirect_draw_command_buffer: RawBufferVec<GpuIndexedIndirectDrawCommand>,
@@ -2539,11 +2544,8 @@ impl EffectsMeta {
                 NonZeroU64::new(item_align),
                 Some("hanabi:buffer:effect_metadata".to_string()),
             ),
-            effect_sort_metadata_buffer: BufferTable::new(
-                BufferUsages::STORAGE,
-                NonZeroU64::new(item_align),
-                Some("hanabi:buffer:sort_metadata".to_string()),
-            ),
+            effect_sort_metadata_buffer: RawBufferVec::new(BufferUsages::STORAGE),
+            sort_metadata_indices_buffer: RawBufferVec::new(BufferUsages::STORAGE),
             total_batch_count: 0,
             render_batch_metadata_buffer: UniformBuffer::default(),
             batch_effect_indices_buffer: RawBufferVec::new(BufferUsages::STORAGE),
@@ -2616,20 +2618,9 @@ impl EffectsMeta {
             let effect_metadata_buffer_table_id =
                 self.effect_metadata_buffer.insert(gpu_effect_metadata);
 
-            let effect_sort_metadata_index =
-                if added_effect.layout_flags.contains(LayoutFlags::RIBBONS) {
-                    // This gets filled in later. All we need to do at this point is to reserve a slot.
-                    Some(
-                        self.effect_sort_metadata_buffer
-                            .insert(GpuEffectSortMetadata::default()),
-                    )
-                } else {
-                    None
-                };
-
             let dispatch_buffer_indices = DispatchBufferIndices {
                 effect_metadata_buffer_table_id,
-                effect_sort_metadata_index,
+                effect_sort_metadata_index: None,
             };
 
             // Insert the effect into the cache. This will allocate all the necessary
@@ -2900,9 +2891,6 @@ pub(crate) fn add_effects(
         .clear_previous_frame_resizes();
     effects_meta
         .effect_metadata_buffer
-        .clear_previous_frame_resizes();
-    effects_meta
-        .effect_sort_metadata_buffer
         .clear_previous_frame_resizes();
 
     // Allocate new effects
@@ -3940,11 +3928,6 @@ pub(crate) fn prepare_effects(
             .unwrap_or_default()
             / 4;
 
-        let sort_metadata_index = match dispatch_buffer_indices.effect_sort_metadata_index {
-            Some(effect_sort_metadata_index) => effect_sort_metadata_index.0,
-            None => !0,
-        };
-
         let properties_index = match cached_effect_properties {
             Some(cached_effect_properties) => cached_effect_properties.range.start,
             None => !0,
@@ -3970,7 +3953,6 @@ pub(crate) fn prepare_effects(
             ping: 0,
             // Note: the indirect draw args are at the start of the GpuEffectMetadata struct
             indirect_render_index: dispatch_buffer_indices.effect_metadata_buffer_table_id.0,
-            sort_metadata_index,
             properties_index,
             local_child_index,
             global_child_index,
@@ -4132,7 +4114,7 @@ pub(crate) fn batch_effects(
             cached_effect_events,
             cached_child_info,
             cached_properties,
-            dispatch_buffer_indices,
+            mut dispatch_buffer_indices,
             mut input,
         )) = q_cached_effects.get_mut(entity)
         else {
@@ -4189,24 +4171,6 @@ pub(crate) fn batch_effects(
         );
     }
 
-    // Build the render batches.
-    sorted_effects.batches.clear();
-    for (effect_instance_index, effect_instance) in sorted_effects.instances.iter().enumerate() {
-        sorted_effects
-            .batches
-            .entry(EffectBatchKey::new(
-                effect_instance.handle.id(),
-                effect_instance.buffer_index,
-                effect_instance
-                    .child_event_buffers
-                    .iter()
-                    .map(|child_event_buffer| child_event_buffer.buffer_index),
-            ))
-            .or_insert_with(default)
-            .effect_instance_indices
-            .push(EffectInstanceIndex(effect_instance_index as u32));
-    }
-
     // Clear out the batch buffers.
     effects_meta.total_batch_count = 0;
     effects_meta.total_batches_requiring_sorting_count = 0;
@@ -4223,6 +4187,41 @@ pub(crate) fn batch_effects(
         .clear();
     effects_meta.sort_dispatch_indirect_buffer.clear();
     effects_meta.update_dispatch_indirect_buffer.clear();
+    effects_meta.sort_metadata_indices_buffer.clear();
+    effects_meta.effect_sort_metadata_buffer.clear();
+
+    // Build the render batches.
+
+    sorted_effects.batches.clear();
+
+    for (effect_instance_index, mut effect_instance) in
+        sorted_effects.instances.iter_mut().enumerate()
+    {
+        sorted_effects
+            .batches
+            .entry(EffectBatchKey::new(
+                effect_instance.handle.id(),
+                effect_instance.buffer_index,
+                effect_instance
+                    .child_event_buffers
+                    .iter()
+                    .map(|child_event_buffer| child_event_buffer.buffer_index),
+            ))
+            .or_insert_with(default)
+            .effect_instance_indices
+            .push(EffectInstanceIndex(effect_instance_index as u32));
+
+        // This will be filled in later.
+        let effect_sort_metadata_index = effects_meta
+            .effect_sort_metadata_buffer
+            .push(GpuEffectSortMetadata::default()) as u32;
+        effect_instance
+            .dispatch_buffer_indices
+            .effect_sort_metadata_index = Some(effect_sort_metadata_index);
+        effects_meta
+            .sort_metadata_indices_buffer
+            .push(effect_sort_metadata_index);
+    }
 
     // Rebuild the batch buffers.
     for (_, effect_batch) in &mut sorted_effects.batches {
@@ -4290,7 +4289,12 @@ pub(crate) fn batch_effects(
                         .dispatch_buffer_indices
                         .effect_metadata_buffer_table_id
                         .0,
+                    effect_sort_metadata_index: sorted_effect_batch
+                        .dispatch_buffer_indices
+                        .effect_sort_metadata_index
+                        .unwrap_or(!0),
                     spawner_index: sorted_effect_batch.spawner_base,
+                    pad: 0,
                 });
         }
         let last_batch_effect_index_offset = effects_meta.batch_effect_indices_buffer.len() as u32;
@@ -4375,7 +4379,7 @@ pub(crate) fn batch_effects(
                 let sort_buffer_range =
                     sort_bind_groups.allocate_sort_buffer_slots(effect_instance.slice.len() as u32);
 
-                effects_meta.effect_sort_metadata_buffer.update(
+                effects_meta.effect_sort_metadata_buffer.set(
                     effect_sort_metadata_index,
                     GpuEffectSortMetadata {
                         first_sort_buffer_index: sort_buffer_range.start,
@@ -4383,6 +4387,7 @@ pub(crate) fn batch_effects(
                         last_sort_buffer_index: sort_buffer_range.start,
                         indirect_command_index: effect_batch
                             .sort_dispatch_indirect_buffer_row_index,
+                        pad: 0,
                     },
                 );
             }
@@ -4473,10 +4478,16 @@ pub(crate) fn prepare_late_gpu_resources(
         &mut effects_meta.update_dispatch_indirect_buffer,
         &render_device,
     );
-
-    effects_meta
-        .effect_sort_metadata_buffer
-        .allocate_gpu(&render_device, &render_queue);
+    ensure_raw_buffer_nonempty_and_write(
+        &mut effects_meta.sort_metadata_indices_buffer,
+        &render_device,
+        &render_queue,
+    );
+    ensure_raw_buffer_nonempty_and_write(
+        &mut effects_meta.effect_sort_metadata_buffer,
+        &render_device,
+        &render_queue,
+    );
 
     sort_bind_groups.write_sort_buffer(&render_device, &render_queue);
     event_cache.write_buffers(&render_device, &render_queue);
@@ -6522,9 +6533,20 @@ pub(crate) fn prepare_bind_groups(
                 continue;
             }
 
-            if let Err(err) = sort_bind_groups.ensure_sort_bind_group(effect_sort_metadata_buffer) {
+            let Some(sort_metadata_indices_buffer) =
+                effects_meta.sort_metadata_indices_buffer.buffer()
+            else {
+                error!("Sort metadata indices buffer not present; can't sort");
+                continue;
+            };
+
+            if let Err(err) = sort_bind_groups.ensure_sort_bind_group(
+                effect_sort_metadata_buffer,
+                sort_metadata_indices_buffer,
+                effects_meta.sort_metadata_indices_buffer.len(),
+            ) {
                 error!(
-                    "Failed to create sort bind group @0 for ribbon effect: {:?}",
+                    "failed to create sort bind group @0 for ribbon effect: {:?}",
                     err
                 );
                 continue;
@@ -7498,8 +7520,8 @@ impl Node for VfxSimulateNode {
         // Compute sort pass
         if let Some(effect_sort_metadata_buffer) = effects_meta.effect_sort_metadata_buffer.buffer()
         {
-            let effect_sort_metadata_count = effects_meta.effect_sort_metadata_buffer.len();
-            if effect_sort_metadata_count > 0 {
+            let sort_metadata_index_count = effects_meta.sort_metadata_indices_buffer.len() as u32;
+            if sort_metadata_index_count > 0 {
                 let mut compute_pass =
                     self.begin_compute_pass("hanabi:sort", pipeline_cache, render_context);
 
@@ -7648,7 +7670,7 @@ impl Node for VfxSimulateNode {
                         compute_pass.set_bind_group(0, sort_bind_group, &[]);
 
                         const WORKGROUP_SIZE: u32 = 64;
-                        let spawn_count = effect_sort_metadata_count.div_ceil(WORKGROUP_SIZE);
+                        let spawn_count = sort_metadata_index_count.div_ceil(WORKGROUP_SIZE);
                         compute_pass.dispatch_workgroups(spawn_count, 1, 1);
                         trace!("Dispatched sort");
                     }

@@ -109,6 +109,8 @@ pub struct SortBindGroups {
 struct CachedSortBindGroup {
     sort_buffer_id: BufferId,
     sort_metadata_buffer_id: BufferId,
+    sort_metadata_indices_buffer_id: BufferId,
+    sort_metadata_indices_count: usize,
     bind_group: BindGroup,
 }
 
@@ -152,6 +154,18 @@ impl SortBindGroups {
                         ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: Some(sort_metadata_size),
+                    },
+                    count: None,
+                },
+                // @group(0) @binding(2) var<storage, read>
+                // sort_metadata_indices : array<u32>;
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(u32::min_size()),
                     },
                     count: None,
                 },
@@ -935,6 +949,8 @@ impl SortBindGroups {
     pub(crate) fn ensure_sort_bind_group(
         &mut self,
         effect_sort_metadata: &Buffer,
+        sort_metadata_indices_buffer: &Buffer,
+        sort_metadata_indices_count: usize,
     ) -> Result<&BindGroup, ()> {
         let sort_buffer = self
             .sort_buffer
@@ -944,6 +960,9 @@ impl SortBindGroups {
         if self.sort_bind_group.as_ref().is_none_or(|sort_bind_group| {
             sort_bind_group.sort_metadata_buffer_id != effect_sort_metadata.id()
                 || sort_bind_group.sort_buffer_id != sort_buffer.id()
+                || sort_bind_group.sort_metadata_indices_buffer_id
+                    != sort_metadata_indices_buffer.id()
+                || sort_bind_group.sort_metadata_indices_count != sort_metadata_indices_count
         }) {
             let sort_bind_group = self.render_device.create_bind_group(
                 "hanabi:bind_group:sort",
@@ -968,12 +987,30 @@ impl SortBindGroups {
                             size: None,
                         }),
                     },
+                    // @group(0) @binding(2) var<storage, read>
+                    // sort_metadata_indices : array<u32>;
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: sort_metadata_indices_buffer,
+                            offset: 0,
+                            size: Some(
+                                NonZeroU64::try_from(
+                                    (sort_metadata_indices_count as u64).max(1)
+                                        * u64::from(u32::min_size()),
+                                )
+                                .unwrap(),
+                            ),
+                        }),
+                    },
                 ],
             );
 
             self.sort_bind_group = Some(CachedSortBindGroup {
                 sort_buffer_id: sort_buffer.id(),
                 sort_metadata_buffer_id: effect_sort_metadata.id(),
+                sort_metadata_indices_buffer_id: sort_metadata_indices_buffer.id(),
+                sort_metadata_indices_count,
                 bind_group: sort_bind_group,
             });
         }
