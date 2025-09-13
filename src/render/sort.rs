@@ -6,6 +6,7 @@ use std::{
 use bevy::{
     asset::Handle,
     ecs::{resource::Resource, world::World},
+    log::info,
     platform::collections::{hash_map::Entry, HashMap},
     render::{
         render_resource::{
@@ -65,7 +66,6 @@ struct SortFillBindGroupKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct SortCopyBindGroupKey {
     indirect_index: BufferId,
-    sort: BufferId,
     effect_metadata: BufferId,
     effect_sort_metadata: BufferId,
 }
@@ -91,7 +91,7 @@ pub struct SortBindGroups {
     sort_fill_bind_group_layouts:
         HashMap<SortFillBindGroupLayoutKey, (BindGroupLayout, CachedComputePipelineId)>,
     /// Bind groups for group #0 of the sort-fill compute pass.
-    sort_fill_bind_groups: HashMap<SortFillBindGroupKey, BindGroup>,
+    sort_fill_bind_groups: Option<SortFillBindGroups>,
     /// Bind groups for group #0 of the sort compute pass.
     sort_bind_group: Option<CachedSortBindGroup>,
     sort_indirect_batch_bind_group_layout: BindGroupLayout,
@@ -103,7 +103,25 @@ pub struct SortBindGroups {
     /// Pipeline for sort-copy pass.
     sort_copy_pipeline_id: CachedComputePipelineId,
     /// Bind groups for group #0 of the sort-copy compute pass.
-    sort_copy_bind_groups: HashMap<SortCopyBindGroupKey, BindGroup>,
+    sort_copy_bind_groups: Option<SortCopyBindGroups>,
+}
+
+/// Bind groups for group #0 of the sort-fill compute pass.
+struct SortFillBindGroups {
+    // This is not part of the bind group key, because we don't want to cache
+    // sort buffer bind groups. Otherwise they'll leak when we go to resize the
+    // sort buffer.
+    sort_buffer_id: BufferId,
+    bind_groups: HashMap<SortFillBindGroupKey, BindGroup>,
+}
+
+/// Bind groups for group #0 of the sort-copy compute pass.
+struct SortCopyBindGroups {
+    // This is not part of the bind group key, because we don't want to cache
+    // sort buffer bind groups. Otherwise they'll leak when we go to resize the
+    // sort buffer.
+    sort_buffer_id: BufferId,
+    bind_groups: HashMap<SortCopyBindGroupKey, BindGroup>,
 }
 
 struct CachedSortBindGroup {
@@ -698,13 +716,36 @@ impl SortBindGroups {
         render_batch_descriptor_buffer: &Buffer,
         batch_effect_indices_buffer: &Buffer,
     ) -> Result<&BindGroup, ()> {
+        let sort_buffer = self
+            .sort_buffer
+            .buffer()
+            .expect("Sort buffer must be present");
+        let sort_buffer_id = sort_buffer.id();
+        if self
+            .sort_fill_bind_groups
+            .as_ref()
+            .is_some_and(|sort_fill_bind_groups| {
+                sort_fill_bind_groups.sort_buffer_id != sort_buffer_id
+            })
+        {
+            info!("Sort buffer resized; clearing old sort fill bind groups.");
+            self.sort_fill_bind_groups = None;
+        }
+
+        let sort_fill_bind_groups =
+            self.sort_fill_bind_groups
+                .get_or_insert_with(|| SortFillBindGroups {
+                    sort_buffer_id,
+                    bind_groups: HashMap::default(),
+                });
+
         let key = SortFillBindGroupKey {
             particle: particle.id(),
             indirect_index: indirect_index.id(),
             effect_metadata: effect_metadata.id(),
             effect_sort_metadata: effect_sort_metadata.id(),
         };
-        let entry = self.sort_fill_bind_groups.entry(key);
+        let entry = sort_fill_bind_groups.bind_groups.entry(key);
         let bind_group = match entry {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
@@ -721,87 +762,82 @@ impl SortBindGroups {
                 // happy.
                 let key = SortFillBindGroupLayoutKey::from_particle_layout(particle_layout)?;
                 let layout = &self.sort_fill_bind_group_layouts.get(&key).ok_or(())?.0;
-                entry.insert(
-                    self.render_device.create_bind_group(
-                        "hanabi:bind_group:sort_fill",
-                        layout,
-                        &[
-                            // @group(0) @binding(0) var<storage, read_write> pairs:
-                            // array<KeyValuePair>;
-                            BindGroupEntry {
-                                binding: 0,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: self
-                                        .sort_buffer
-                                        .buffer()
-                                        .expect("Sort buffer should be allocated by now"),
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(1) var<storage, read> particle_buffer:
-                            // ParticleBuffer;
-                            BindGroupEntry {
-                                binding: 1,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: particle,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(2) var<storage, read> indirect_index_buffer :
-                            // array<u32>;
-                            BindGroupEntry {
-                                binding: 2,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: indirect_index,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(3) var<storage, read> effect_metadata :
-                            // array<EffectMetadata>;
-                            BindGroupEntry {
-                                binding: 3,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: effect_metadata,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(4) var<storage, read>
-                            // batch_descriptor : BatchDescriptor;
-                            BindGroupEntry {
-                                binding: 4,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: render_batch_descriptor_buffer,
-                                    offset: 0,
-                                    size: Some(render_batch_descriptor_size),
-                                }),
-                            },
-                            // @group(0) @binding(5) var<storage, read>
-                            // batch_effect_indices : array<BatchEffectIndices>;
-                            BindGroupEntry {
-                                binding: 5,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: batch_effect_indices_buffer,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(6) var<storage, read_write>
-                            // effect_sort_metadata : array<EffectSortMetadataAtomic>;
-                            BindGroupEntry {
-                                binding: 6,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: effect_sort_metadata,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                        ],
-                    ),
-                )
+                entry.insert(self.render_device.create_bind_group(
+                    "hanabi:bind_group:sort_fill",
+                    layout,
+                    &[
+                        // @group(0) @binding(0) var<storage, read_write> pairs:
+                        // array<KeyValuePair>;
+                        BindGroupEntry {
+                            binding: 0,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: sort_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(1) var<storage, read> particle_buffer:
+                        // ParticleBuffer;
+                        BindGroupEntry {
+                            binding: 1,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: particle,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(2) var<storage, read> indirect_index_buffer :
+                        // array<u32>;
+                        BindGroupEntry {
+                            binding: 2,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: indirect_index,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(3) var<storage, read> effect_metadata :
+                        // array<EffectMetadata>;
+                        BindGroupEntry {
+                            binding: 3,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: effect_metadata,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(4) var<storage, read>
+                        // batch_descriptor : BatchDescriptor;
+                        BindGroupEntry {
+                            binding: 4,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: render_batch_descriptor_buffer,
+                                offset: 0,
+                                size: Some(render_batch_descriptor_size),
+                            }),
+                        },
+                        // @group(0) @binding(5) var<storage, read>
+                        // batch_effect_indices : array<BatchEffectIndices>;
+                        BindGroupEntry {
+                            binding: 5,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: batch_effect_indices_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(6) var<storage, read_write>
+                        // effect_sort_metadata : array<EffectSortMetadataAtomic>;
+                        BindGroupEntry {
+                            binding: 6,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: effect_sort_metadata,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                    ],
+                ))
             }
         };
         Ok(bind_group)
@@ -814,13 +850,26 @@ impl SortBindGroups {
         effect_metadata: BufferId,
         effect_sort_metadata: BufferId,
     ) -> Option<&BindGroup> {
-        let key = SortFillBindGroupKey {
-            particle,
-            indirect_index,
-            effect_metadata,
-            effect_sort_metadata,
-        };
-        self.sort_fill_bind_groups.get(&key)
+        let sort_buffer_id = self
+            .sort_buffer
+            .buffer()
+            .expect("Sort buffer must be present")
+            .id();
+        self.sort_fill_bind_groups
+            .as_ref()
+            .and_then(|sort_fill_bind_groups| {
+                if sort_buffer_id == sort_fill_bind_groups.sort_buffer_id {
+                    let key = SortFillBindGroupKey {
+                        particle,
+                        indirect_index,
+                        effect_metadata,
+                        effect_sort_metadata,
+                    };
+                    sort_fill_bind_groups.bind_groups.get(&key)
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn ensure_sort_copy_bind_group(
@@ -831,17 +880,35 @@ impl SortBindGroups {
         render_batch_descriptor_buffer: &Buffer,
         batch_effect_indices_buffer: &Buffer,
     ) -> Result<&BindGroup, ()> {
+        let sort_buffer = self
+            .sort_buffer
+            .buffer()
+            .expect("Sort buffer must be present");
+        let sort_buffer_id = sort_buffer.id();
+        if self
+            .sort_copy_bind_groups
+            .as_ref()
+            .is_some_and(|sort_copy_bind_groups| {
+                sort_copy_bind_groups.sort_buffer_id != sort_buffer_id
+            })
+        {
+            info!("Sort buffer resized; clearing old sort copy bind groups.");
+            self.sort_copy_bind_groups = None;
+        }
+
+        let sort_copy_bind_groups =
+            self.sort_copy_bind_groups
+                .get_or_insert_with(|| SortCopyBindGroups {
+                    sort_buffer_id,
+                    bind_groups: HashMap::default(),
+                });
+
         let key = SortCopyBindGroupKey {
             indirect_index: indirect_index_buffer.id(),
-            sort: self
-                .sort_buffer
-                .buffer()
-                .expect("Sort buffer must be present")
-                .id(),
             effect_metadata: effect_metadata_buffer.id(),
             effect_sort_metadata: effect_sort_metadata_buffer.id(),
         };
-        let entry = self.sort_copy_bind_groups.entry(key);
+        let entry = sort_copy_bind_groups.bind_groups.entry(key);
         let bind_group = match entry {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
@@ -852,76 +919,71 @@ impl SortBindGroups {
                 let render_batch_descriptor_size =
                     GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
-                entry.insert(
-                    self.render_device.create_bind_group(
-                        "hanabi:bind_group:sort_copy",
-                        &self.sort_copy_bind_group_layout,
-                        &[
-                            // @group(0) @binding(0) var<storage, read_write> indirect_index_buffer
-                            // : IndirectIndexBuffer;
-                            BindGroupEntry {
-                                binding: 0,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: indirect_index_buffer,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(1) var<storage, read> sort_buffer : SortBuffer;
-                            BindGroupEntry {
-                                binding: 1,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: self
-                                        .sort_buffer
-                                        .buffer()
-                                        .expect("Sort buffer must be present"),
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(2) var<storage, read> effect_metadata :
-                            // EffectMetadata;
-                            BindGroupEntry {
-                                binding: 2,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: effect_metadata_buffer,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(3) var<storage, read>
-                            // batch_descriptor : BatchDescriptor;
-                            BindGroupEntry {
-                                binding: 3,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: render_batch_descriptor_buffer,
-                                    offset: 0,
-                                    size: Some(render_batch_descriptor_size),
-                                }),
-                            },
-                            // @group(0) @binding(4) var<storage, read>
-                            // batch_effect_indices : array<BatchEffectIndices>;
-                            BindGroupEntry {
-                                binding: 4,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: batch_effect_indices_buffer,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                            // @group(0) @binding(5) var<storage, read>
-                            // effect_sort_metadata : EffectSortMetadata;
-                            BindGroupEntry {
-                                binding: 5,
-                                resource: BindingResource::Buffer(BufferBinding {
-                                    buffer: effect_sort_metadata_buffer,
-                                    offset: 0,
-                                    size: None,
-                                }),
-                            },
-                        ],
-                    ),
-                )
+                entry.insert(self.render_device.create_bind_group(
+                    "hanabi:bind_group:sort_copy",
+                    &self.sort_copy_bind_group_layout,
+                    &[
+                        // @group(0) @binding(0) var<storage, read_write> indirect_index_buffer
+                        // : IndirectIndexBuffer;
+                        BindGroupEntry {
+                            binding: 0,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: indirect_index_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(1) var<storage, read> sort_buffer : SortBuffer;
+                        BindGroupEntry {
+                            binding: 1,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: sort_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(2) var<storage, read> effect_metadata :
+                        // EffectMetadata;
+                        BindGroupEntry {
+                            binding: 2,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: effect_metadata_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(3) var<storage, read>
+                        // batch_descriptor : BatchDescriptor;
+                        BindGroupEntry {
+                            binding: 3,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: render_batch_descriptor_buffer,
+                                offset: 0,
+                                size: Some(render_batch_descriptor_size),
+                            }),
+                        },
+                        // @group(0) @binding(4) var<storage, read>
+                        // batch_effect_indices : array<BatchEffectIndices>;
+                        BindGroupEntry {
+                            binding: 4,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: batch_effect_indices_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        // @group(0) @binding(5) var<storage, read>
+                        // effect_sort_metadata : EffectSortMetadata;
+                        BindGroupEntry {
+                            binding: 5,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: effect_sort_metadata_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                    ],
+                ))
             }
         };
         Ok(bind_group)
@@ -933,17 +995,25 @@ impl SortBindGroups {
         effect_metadata: BufferId,
         effect_sort_metadata: BufferId,
     ) -> Option<&BindGroup> {
-        let key = SortCopyBindGroupKey {
-            indirect_index,
-            sort: self
-                .sort_buffer
-                .buffer()
-                .expect("Sort buffer must be present")
-                .id(),
-            effect_metadata,
-            effect_sort_metadata,
-        };
-        self.sort_copy_bind_groups.get(&key)
+        let sort_buffer_id = self
+            .sort_buffer
+            .buffer()
+            .expect("Sort buffer must be present")
+            .id();
+        self.sort_copy_bind_groups
+            .as_ref()
+            .and_then(|sort_copy_bind_groups| {
+                if sort_buffer_id == sort_copy_bind_groups.sort_buffer_id {
+                    let key = SortCopyBindGroupKey {
+                        indirect_index,
+                        effect_metadata,
+                        effect_sort_metadata,
+                    };
+                    sort_copy_bind_groups.bind_groups.get(&key)
+                } else {
+                    None
+                }
+            })
     }
 
     pub(crate) fn ensure_sort_bind_group(
