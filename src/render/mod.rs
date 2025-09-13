@@ -4393,9 +4393,6 @@ pub(crate) fn batch_effects(
             .layout_flags
             .contains(LayoutFlags::CONSUME_GPU_SPAWN_EVENTS)
         {
-            effects_meta
-                .batch_descriptors_requiring_sorting_buffer
-                .push(effect_batch.batch_descriptor_index);
             effects_meta.total_batches_with_events_count += 1;
         }
 
