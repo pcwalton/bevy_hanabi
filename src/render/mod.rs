@@ -4194,18 +4194,23 @@ pub(crate) fn batch_effects(
 
     sorted_effects.batches.clear();
 
-    for (effect_instance_index, mut effect_instance) in
-        sorted_effects.instances.iter_mut().enumerate()
+    for (effect_instance_index, effect_instance) in sorted_effects.instances.iter_mut().enumerate()
     {
+        let child_event_buffer_indices = effect_instance
+            .child_event_buffers
+            .iter()
+            .map(|child_event_buffer| child_event_buffer.buffer_index);
+        let consume_events_buffer_index = effect_instance
+            .cached_effect_events
+            .as_ref()
+            .map(|cached_effect_events| cached_effect_events.buffer_index);
         sorted_effects
             .batches
             .entry(EffectBatchKey::new(
                 effect_instance.handle.id(),
                 effect_instance.buffer_index,
-                effect_instance
-                    .child_event_buffers
-                    .iter()
-                    .map(|child_event_buffer| child_event_buffer.buffer_index),
+                child_event_buffer_indices,
+                consume_events_buffer_index,
             ))
             .or_insert_with(default)
             .effect_instance_indices

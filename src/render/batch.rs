@@ -125,7 +125,11 @@ pub(crate) struct SortedEffects {
 pub(crate) struct EffectBatchKey {
     asset_id: AssetId<EffectAsset>,
     particle_buffer_index: u32,
+    /// Event buffer indices of any *child* effects of this effect.
     child_event_buffer_indices: SmallVec<[u32; 4]>,
+    /// Event buffer index of the *parent* effect of this effect, if there is
+    /// one.
+    consume_events_buffer_index: Option<u32>,
 }
 
 /// Information about a single batched set of effects.
@@ -186,11 +190,13 @@ impl EffectBatchKey {
         asset_id: AssetId<EffectAsset>,
         particle_buffer_index: u32,
         child_event_buffer_indices: impl Iterator<Item = u32>,
+        consume_events_buffer_index: Option<u32>,
     ) -> EffectBatchKey {
         EffectBatchKey {
             asset_id,
             particle_buffer_index,
             child_event_buffer_indices: child_event_buffer_indices.collect(),
+            consume_events_buffer_index,
         }
     }
 }
