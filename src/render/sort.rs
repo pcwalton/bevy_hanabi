@@ -146,7 +146,8 @@ impl SortBindGroups {
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
         let sort_metadata_size = GpuEffectSortMetadata::aligned_size(storage_alignment);
 
-        let sort_buffer = RawBufferVec::new(BufferUsages::STORAGE);
+        let mut sort_buffer = RawBufferVec::new(BufferUsages::STORAGE);
+        sort_buffer.set_label(Some("hanabi:buffer:sort"));
 
         let sort_bind_group_layout = render_device.create_bind_group_layout(
             "hanabi:bind_group_layout:sort",

@@ -280,8 +280,9 @@ pub struct EventCache {
 impl EventCache {
     /// Create a new event cache.
     pub fn new(device: RenderDevice) -> Self {
-        let init_indirect_dispatch_buffer =
+        let mut init_indirect_dispatch_buffer =
             RawBufferVec::new(BufferUsages::STORAGE | BufferUsages::INDIRECT);
+        init_indirect_dispatch_buffer.set_label(Some("hanabi:buffer:init_indirect_dispatch"));
 
         let child_infos_bind_group_layout = device.create_bind_group_layout(
             "hanabi:bind_group_layout:indirect:child_infos@3",

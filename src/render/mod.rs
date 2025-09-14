@@ -2517,6 +2517,38 @@ impl EffectsMeta {
             item_align
         );
 
+        let mut sort_dispatch_indirect_buffer =
+            RawBufferVec::new(BufferUsages::STORAGE | BufferUsages::INDIRECT);
+        sort_dispatch_indirect_buffer.set_label(Some("hanabi:buffer:sort_dispatch_indirect"));
+
+        let mut effect_sort_metadata_buffer = RawBufferVec::new(BufferUsages::STORAGE);
+        effect_sort_metadata_buffer.set_label(Some("hanabi:buffer:effect_sort_metadata"));
+
+        let mut sort_metadata_indices_buffer = RawBufferVec::new(BufferUsages::STORAGE);
+        sort_metadata_indices_buffer.set_label(Some("hanabi:buffer:sort_metadata_indices"));
+
+        let mut batch_effect_indices_buffer = RawBufferVec::new(BufferUsages::STORAGE);
+        batch_effect_indices_buffer.set_label(Some("hanabi:buffer:batch_effect_indices"));
+
+        let mut batch_descriptors_requiring_sorting_buffer =
+            RawBufferVec::new(BufferUsages::STORAGE);
+        batch_descriptors_requiring_sorting_buffer
+            .set_label(Some("hanabi:buffer:batch_descriptors_requiring_sorting"));
+
+        let mut batch_descriptors_with_events_buffer = RawBufferVec::new(BufferUsages::STORAGE);
+        batch_descriptors_with_events_buffer
+            .set_label(Some("hanabi:buffer:batch_descriptors_with_events"));
+
+        let mut indexed_indirect_draw_command_buffer =
+            RawBufferVec::new(BufferUsages::STORAGE | BufferUsages::INDIRECT);
+        indexed_indirect_draw_command_buffer
+            .set_label(Some("hanabi:buffer:indexed_indirect_draw_command"));
+
+        let mut non_indexed_indirect_draw_command_buffer =
+            RawBufferVec::new(BufferUsages::STORAGE | BufferUsages::INDIRECT);
+        non_indexed_indirect_draw_command_buffer
+            .set_label(Some("hanabi:buffer:non_indexed_indirect_draw_command"));
+
         Self {
             view_bind_group: None,
             view_transmissive_bind_groups: EntityHashMap::default(),
@@ -2536,34 +2568,28 @@ impl EffectsMeta {
                 BufferUsages::STORAGE | BufferUsages::INDIRECT,
                 Some("hanabi:buffer:update_dispatch_indirect".to_string()),
             ),
-            sort_dispatch_indirect_buffer: RawBufferVec::new(
-                BufferUsages::STORAGE | BufferUsages::INDIRECT,
-            ),
+            sort_dispatch_indirect_buffer,
             effect_metadata_buffer: BufferTable::new(
                 BufferUsages::STORAGE | BufferUsages::INDIRECT,
                 NonZeroU64::new(item_align),
                 Some("hanabi:buffer:effect_metadata".to_string()),
             ),
-            effect_sort_metadata_buffer: RawBufferVec::new(BufferUsages::STORAGE),
-            sort_metadata_indices_buffer: RawBufferVec::new(BufferUsages::STORAGE),
+            effect_sort_metadata_buffer,
+            sort_metadata_indices_buffer,
             total_batch_count: 0,
             render_batch_metadata_buffer: UniformBuffer::default(),
-            batch_effect_indices_buffer: RawBufferVec::new(BufferUsages::STORAGE),
+            batch_effect_indices_buffer,
             batch_descriptor_buffer: AlignedBufferVec::new(
                 BufferUsages::STORAGE,
                 NonZeroU64::new(item_align),
                 Some("hanabi:buffer:render_batch_descriptor".to_string()),
             ),
-            batch_descriptors_requiring_sorting_buffer: RawBufferVec::new(BufferUsages::STORAGE),
-            batch_descriptors_with_events_buffer: RawBufferVec::new(BufferUsages::STORAGE),
+            batch_descriptors_requiring_sorting_buffer,
+            batch_descriptors_with_events_buffer,
             total_batches_requiring_sorting_count: 0,
             total_batches_with_events_count: 0,
-            indexed_indirect_draw_command_buffer: RawBufferVec::new(
-                BufferUsages::STORAGE | BufferUsages::INDIRECT,
-            ),
-            non_indexed_indirect_draw_command_buffer: RawBufferVec::new(
-                BufferUsages::STORAGE | BufferUsages::INDIRECT,
-            ),
+            indexed_indirect_draw_command_buffer,
+            non_indexed_indirect_draw_command_buffer,
             indirect_shader_noevent,
             indirect_shader_events,
             init_indirect_batch_shader,
