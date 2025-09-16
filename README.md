@@ -1,4 +1,37 @@
-# 🎆 Bevy Hanabi
+# Hanabi-Batched
+
+This is a temporary fork of [Bevy Hanabi](https://github.com/djeedai/bevy_hanabi/), a GPU-driven VFX system for [Bevy](http://bevyengine.org/) 0.16, with batching optimizations and other improvements that make it more suitable for production use in games.
+
+Hanabi is a capable system, but performance and other limitations prevent its use in many applications. This fork addresses these issues by providing the following improvements:
+
+* *Batching*: Hanabi-Batched batches together many instances of the same effect, dramatically improving performance with many particle systems.
+
+* *Additional performance improvements*: Hanabi-Batched features other, more localized, optimizations. For example, instead of using insertion sort for ribbon sorting, it uses heapsort, making ribbons usable in many more scenarios.
+
+* *More expression features*: More functionality is available in expressions, such as [`select`](https://www.w3.org/TR/WGSL/#select-builtin).
+
+Hanabi-Batched intends to provide a compatible API to Hanabi, making it a drop-in replacement for games that need more performance and features than what upstream Hanabi provides.
+
+*Please note that this fork is intended to be temporary.* Upstream Hanabi is currently working on an alternative approach to batching as well as a variety of internal refactorings. I intend to contribute some of the smaller improvements in Hanabi-Batched upstream, but the particular batching approach used in Hanabi-Batched will remain specific to this fork. When upstream Hanabi has comparable performance to Hanabi-Batched, this repository will be deprecated, and at that time I suggest moving back to upstream.
+
+## How to use
+
+Add this to `Cargo.toml`:
+
+```toml
+[dependencies]
+bevy_hanabi = { git = "https://github.com/pcwalton/bevy_hanabi", branch = "batched" }
+```
+
+## Contributions
+
+You may submit pull requests here, but consider whether they should go upstream as well.
+
+## License
+
+Licensed under the same terms as Bevy Hanabi itself.
+
+# Original README
 
 [![License: MIT or Apache 2.0](https://img.shields.io/badge/License-MIT%20or%20Apache2-blue.svg)](./LICENSE)
 [![Doc](https://docs.rs/bevy_hanabi/badge.svg)](https://docs.rs/bevy_hanabi)
