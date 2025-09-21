@@ -2,7 +2,7 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io::{BufWriter, Seek, Write},
+    io::{BufWriter, Seek, SeekFrom, Write},
     iter, mem,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -50,6 +50,10 @@ pub(crate) fn debug_dump_buffers(
     let Some(ref output_directory_path) = debug_settings.dump_particles_to_csv else {
         return;
     };
+
+    if q_cached_effects.is_empty() {
+        return;
+    }
 
     if let Err(err) = fs::create_dir_all(output_directory_path) {
         error!(
@@ -202,15 +206,17 @@ impl DebugBufferDumper {
                 <GpuEffectMetadata as ShaderSize>::SHADER_SIZE.get() as usize;
 
             for (main_entity, readback_effect_info) in &self.readback_effect_info {
-                let csv_file_path = self.output_directory_path.join(format!(
+                let csv_filename = format!(
                     "{}-{}-{}.csv",
                     main_entity.index(),
                     main_entity.generation(),
                     readback_effect_info.name
-                ));
+                );
+                let csv_file_path = self.output_directory_path.join(&csv_filename);
                 let mut csv_file = match OpenOptions::new()
                     .create(true)
-                    .append(true)
+                    .write(true)
+                    .truncate(false)
                     .open(&csv_file_path)
                 {
                     Ok(csv_file) => BufWriter::new(csv_file),
@@ -219,6 +225,7 @@ impl DebugBufferDumper {
                         continue;
                     }
                 };
+                let _ = csv_file.seek(SeekFrom::End(0));
 
                 let effect_metadata_start_pos = effects_metadata_aligned_size
                     * (readback_effect_info
@@ -246,18 +253,65 @@ impl DebugBufferDumper {
                 if csv_file.stream_position().is_ok_and(|pos| pos == 0) {
                     let _ = write!(csv_file, "time,particle_index");
                     for attribute_layout in readback_effect_info.particle_layout.attributes() {
-                        let _ = write!(csv_file, ",{}", attribute_layout.attribute.name());
+                        let _ = write!(csv_file, ",");
+                        let attribute_name = attribute_layout.attribute.name();
+                        match attribute_layout.attribute.value_type() {
+                            ValueType::Scalar(_) | ValueType::Matrix(_) => {
+                                let _ = write!(csv_file, "{}", attribute_name);
+                            }
+                            ValueType::Vector(vector_type) => match vector_type.count() {
+                                4 => {
+                                    let _ = write!(
+                                        csv_file,
+                                        "{}.x,{}.y,{}.z,{}.w",
+                                        attribute_name,
+                                        attribute_name,
+                                        attribute_name,
+                                        attribute_name
+                                    );
+                                }
+                                3 => {
+                                    let _ = write!(
+                                        csv_file,
+                                        "{}.x,{}.y,{}.z",
+                                        attribute_name, attribute_name, attribute_name
+                                    );
+                                }
+                                2 => {
+                                    let _ = write!(
+                                        csv_file,
+                                        "{}.x,{}.y",
+                                        attribute_name, attribute_name
+                                    );
+                                }
+                                _ => {
+                                    let _ = write!(csv_file, "{}.x", attribute_name);
+                                }
+                            },
+                        }
                     }
                     let _ = writeln!(csv_file);
                 }
 
-                for indirect_particle_index in 0..effect_metadata.alive_count {
+                for indirect_particle_index in 0..effect_metadata.instance_count {
                     // Always write into ping, read from pong
                     let update_write_index = effect_metadata.ping;
-                    let particle_index = indirect_indices[3
-                        * (indirect_particle_index as usize
+                    let Some(&particle_index) = indirect_indices.get(
+                        3 * (indirect_particle_index as usize
                             + effect_metadata.base_instance as usize)
-                        + update_write_index as usize];
+                            + update_write_index as usize,
+                    ) else {
+                        warn!(
+                            "Couldn't dump particle {}/{} for effect {} with base instance \
+                             {}, indirect buffer only had size for {} particles",
+                            indirect_particle_index,
+                            effect_metadata.instance_count,
+                            csv_filename,
+                            effect_metadata.base_instance,
+                            indirect_indices.len()
+                        );
+                        break;
+                    };
 
                     write_row(
                         &mut csv_file,
@@ -295,7 +349,6 @@ fn write_row(
         match attribute_layout.attribute.value_type() {
             ValueType::Scalar(scalar_type) => write_scalar(writer, scalar_type, attribute_data),
             ValueType::Vector(vector_type) => {
-                let _ = write!(writer, "\"");
                 for element in 0..vector_type.count() {
                     if element > 0 {
                         let _ = write!(writer, ",");
@@ -308,7 +361,6 @@ fn write_row(
                             [(elem_type.size() * element)..(elem_type.size() * (element + 1))],
                     );
                 }
-                let _ = write!(writer, "\"");
             }
             ValueType::Matrix(_) => {
                 let _ = write!(writer, "TodoMatrixOutput");
