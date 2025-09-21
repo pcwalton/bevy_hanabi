@@ -11,7 +11,7 @@ use bevy::{
         render_graph::RenderGraph,
         render_phase::DrawFunctions,
         render_resource::{SpecializedComputePipelines, SpecializedRenderPipelines},
-        renderer::{RenderAdapterInfo, RenderDevice},
+        renderer::{render_system, RenderAdapterInfo, RenderDevice},
         texture::GpuImage,
         view::{prepare_view_uniforms, visibility::VisibilitySystems},
         Render, RenderApp, RenderSet,
@@ -26,17 +26,18 @@ use crate::{
     compile_effects,
     properties::EffectProperties,
     render::{
-        add_effects, batch_effects, clear_transient_batch_inputs, extract_effect_events,
-        extract_effects, fixup_parents, on_remove_cached_effect, on_remove_cached_properties,
-        prepare_bind_groups, prepare_effects, prepare_gpu_resources, prepare_late_gpu_resources,
-        prepare_property_buffers, queue_effects, resolve_parents, update_mesh_locations,
-        DebugSettings, DispatchIndirectPipeline, DrawEffects, EffectAssetEvents, EffectBindGroups,
-        EffectCache, EffectsMeta, EventCache, ExtractedEffects, GpuBufferOperations,
-        GpuEffectMetadata, GpuEffectSortMetadata, GpuRenderBatchDescriptor, GpuSpawnerParams,
-        IndirectBatchPipeline, InitIndirectBatchPipeline, ParticlesInitPipeline,
-        ParticlesRenderPipeline, ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache,
-        RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams, SortBindGroups,
-        SortedEffects, StorageType as _, VfxSimulateDriverNode, VfxSimulateNode,
+        add_effects, batch_effects, clear_transient_batch_inputs, debug_dump_buffers,
+        extract_effect_events, extract_effects, fixup_parents, on_remove_cached_effect,
+        on_remove_cached_properties, prepare_bind_groups, prepare_effects, prepare_gpu_resources,
+        prepare_late_gpu_resources, prepare_property_buffers, queue_effects, resolve_parents,
+        update_mesh_locations, DebugSettings, DispatchIndirectPipeline, DrawEffects,
+        EffectAssetEvents, EffectBindGroups, EffectCache, EffectsMeta, EventCache,
+        ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuEffectSortMetadata,
+        GpuRenderBatchDescriptor, GpuSpawnerParams, IndirectBatchPipeline,
+        InitIndirectBatchPipeline, ParticlesInitPipeline, ParticlesRenderPipeline,
+        ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache, RenderBatchPipeline,
+        RenderDebugSettings, ShaderCache, SimParams, SortBindGroups, SortedEffects,
+        StorageType as _, VfxSimulateDriverNode, VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -525,6 +526,12 @@ impl Plugin for HanabiPlugin {
                         .after(queue_effects)
                         .after(prepare_assets::<GpuImage>),
                 ),
+            )
+            .add_systems(
+                Render,
+                debug_dump_buffers
+                    .in_set(RenderSet::Render)
+                    .after(render_system),
             );
         render_app.world_mut().add_observer(on_remove_cached_effect);
         render_app

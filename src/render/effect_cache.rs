@@ -216,7 +216,7 @@ impl EffectBuffer {
         let particle_buffer = render_device.create_buffer(&BufferDescriptor {
             label: Some(&particle_label),
             size: particle_capacity_bytes,
-            usage: BufferUsages::COPY_DST | BufferUsages::STORAGE,
+            usage: BufferUsages::COPY_DST | BufferUsages::STORAGE | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -228,7 +228,7 @@ impl EffectBuffer {
         let indirect_index_buffer = render_device.create_buffer(&BufferDescriptor {
             label: Some(&indirect_label),
             size: capacity_bytes,
-            usage: BufferUsages::COPY_DST | BufferUsages::STORAGE,
+            usage: BufferUsages::COPY_DST | BufferUsages::STORAGE | BufferUsages::COPY_SRC,
             mapped_at_creation: true,
         });
         // Set content

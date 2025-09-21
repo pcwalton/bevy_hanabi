@@ -4,6 +4,7 @@ use std::{
     mem,
     num::{NonZeroU32, NonZeroU64},
     ops::{Deref, DerefMut, Range},
+    path::PathBuf,
     time::Duration,
     vec,
 };
@@ -83,6 +84,7 @@ use crate::{
 mod aligned_buffer_vec;
 mod batch;
 mod buffer_table;
+mod debug;
 mod effect_cache;
 mod event;
 mod gpu_buffer;
@@ -94,6 +96,7 @@ use aligned_buffer_vec::AlignedBufferVec;
 use batch::BatchSpawnInfo;
 pub(crate) use batch::SortedEffects;
 use buffer_table::{BufferTable, BufferTableId};
+pub(crate) use debug::debug_dump_buffers;
 pub(crate) use effect_cache::EffectCache;
 pub(crate) use event::EventCache;
 pub(crate) use property::{
@@ -2087,7 +2090,7 @@ pub(crate) fn extract_effect_events(
 ///     debug_settings.capture_frame_count = 2;
 /// }
 /// ```
-#[derive(Debug, Default, Clone, Copy, Resource)]
+#[derive(Debug, Default, Clone, Resource)]
 pub struct DebugSettings {
     /// Enable automatically starting a GPU debugger capture as soon as this
     /// frame starts rendering (extract phase).
@@ -2126,9 +2129,11 @@ pub struct DebugSettings {
     /// debuggers or graphics APIs might further limit this value on their own,
     /// so there's no guarantee the graphics API will honor this value.
     pub capture_frame_count: u32,
+
+    pub dump_particles_to_csv: Option<PathBuf>,
 }
 
-#[derive(Debug, Default, Clone, Copy, Resource)]
+#[derive(Debug, Default, Clone, Resource)]
 pub(crate) struct RenderDebugSettings {
     /// Is a GPU debugger capture on-going?
     is_capturing: bool,
@@ -2136,6 +2141,7 @@ pub(crate) struct RenderDebugSettings {
     capture_start: Duration,
     /// Number of frames captured so far for on-going GPU debugger capture.
     captured_frames: u32,
+    dump_particles_to_csv: Option<PathBuf>,
 }
 
 /// System extracting data for rendering of all active [`ParticleEffect`]
@@ -2219,6 +2225,10 @@ pub(crate) fn extract_effects(
                 render_debug_settings.capture_start.as_secs_f64()
             );
         }
+    }
+
+    if render_debug_settings.dump_particles_to_csv != debug_settings.dump_particles_to_csv {
+        render_debug_settings.dump_particles_to_csv = debug_settings.dump_particles_to_csv.clone();
     }
 
     // Save simulation params into render world

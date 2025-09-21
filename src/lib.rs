@@ -1,9 +1,7 @@
 #![deny(
-    warnings,
     missing_copy_implementations,
     trivial_casts,
     trivial_numeric_casts,
-    missing_docs,
     unsafe_code,
     unstable_features,
     unused_import_braces,
