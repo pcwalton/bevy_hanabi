@@ -4550,19 +4550,6 @@ pub(crate) fn prepare_late_gpu_resources(
     sort_bind_groups.write_sort_buffer(&render_device, &render_queue);
     event_cache.write_buffers(&render_device, &render_queue);
 
-    fn ensure_aligned_buffer_nonempty_and_write<T>(
-        buffer: &mut AlignedBufferVec<T>,
-        render_device: &RenderDevice,
-        render_queue: &RenderQueue,
-    ) where
-        T: Pod + ShaderSize + Default,
-    {
-        if buffer.is_empty() {
-            buffer.push(T::default());
-        }
-        buffer.write_buffer(render_device, render_queue);
-    }
-
     fn ensure_raw_buffer_nonempty_and_write<T>(
         buffer: &mut RawBufferVec<T>,
         render_device: &RenderDevice,
