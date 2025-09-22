@@ -834,7 +834,7 @@ impl EffectSpawner {
             if self.cycle_time >= self.sampled_period {
                 dt = self.cycle_time - self.sampled_period;
                 self.cycle_time = 0.0;
-                count += self.spawn_remainder.floor() as u32 - self.cycle_spawn;
+                count += (self.spawn_remainder.floor() as u32).saturating_sub(self.cycle_spawn);
                 self.cycle_spawn = 0;
                 self.completed_cycle_count += 1;
 
