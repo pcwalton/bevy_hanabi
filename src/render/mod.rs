@@ -473,6 +473,9 @@ pub(crate) struct GpuRenderBatchDescriptor {
     init_indirect_dispatch_index: u32,
     /// 1 if the mesh is indexed or 0 if it isn't.
     mesh_is_indexed: u32,
+    pad_a: u32,
+    pad_b: u32,
+    pad_c: u32,
 }
 
 #[repr(C)]
@@ -2479,7 +2482,7 @@ pub struct EffectsMeta {
     total_batch_count: u32,
     render_batch_metadata_buffer: UniformBuffer<GpuRenderBatchMetadata>,
     batch_effect_indices_buffer: RawBufferVec<GpuBatchEffectIndices>,
-    batch_descriptor_buffer: AlignedBufferVec<GpuRenderBatchDescriptor>,
+    batch_descriptor_buffer: RawBufferVec<GpuRenderBatchDescriptor>,
     batch_descriptors_requiring_sorting_buffer: RawBufferVec<u32>,
     batch_descriptors_with_events_buffer: RawBufferVec<u32>,
     /// Stores the indices of every piece of [`GpuEffectSortMetadata`] in the
@@ -2559,6 +2562,9 @@ impl EffectsMeta {
         non_indexed_indirect_draw_command_buffer
             .set_label(Some("hanabi:buffer:non_indexed_indirect_draw_command"));
 
+        let mut batch_descriptor_buffer = RawBufferVec::new(BufferUsages::STORAGE);
+        batch_descriptor_buffer.set_label(Some("hanabi:buffer:batch_descriptor"));
+
         Self {
             view_bind_group: None,
             view_transmissive_bind_groups: EntityHashMap::default(),
@@ -2589,11 +2595,7 @@ impl EffectsMeta {
             total_batch_count: 0,
             render_batch_metadata_buffer: UniformBuffer::default(),
             batch_effect_indices_buffer,
-            batch_descriptor_buffer: AlignedBufferVec::new(
-                BufferUsages::STORAGE,
-                NonZeroU64::new(item_align),
-                Some("hanabi:buffer:render_batch_descriptor".to_string()),
-            ),
+            batch_descriptor_buffer,
             batch_descriptors_requiring_sorting_buffer,
             batch_descriptors_with_events_buffer,
             total_batches_requiring_sorting_count: 0,
@@ -4363,6 +4365,9 @@ pub(crate) fn batch_effects(
             } else {
                 0
             },
+            pad_a: 0,
+            pad_b: 0,
+            pad_c: 0,
         };
 
         effect_batch.batch_descriptor_index = effects_meta
@@ -4495,7 +4500,7 @@ pub(crate) fn prepare_late_gpu_resources(
         &render_device,
         &render_queue,
     );
-    ensure_aligned_buffer_nonempty_and_write(
+    ensure_raw_buffer_nonempty_and_write(
         &mut effects_meta.batch_descriptor_buffer,
         &render_device,
         &render_queue,
@@ -4677,6 +4682,7 @@ struct InitMetadataBindGroupLookupKey {
 struct InitMetadataBindGroupKey {
     pub buffer_index: u32,
     pub effect_metadata_buffer: BufferId,
+    pub batch_descriptor_buffer: BufferId,
     pub consume_event_key: Option<ConsumeEventKey>,
 }
 
@@ -4690,6 +4696,7 @@ struct UpdateMetadataBindGroupLookupKey {
 struct UpdateMetadataBindGroupKey {
     pub buffer_index: u32,
     pub effect_metadata_buffer: BufferId,
+    pub batch_descriptor_buffer: BufferId,
     pub child_info_buffer_id: Option<BufferId>,
     pub event_buffers_keys: Vec<BufferId>,
 }
@@ -4703,6 +4710,7 @@ struct RenderMetadataBindGroupLookupKey {
 struct RenderMetadataBindGroupKey {
     pub buffer_index: u32,
     pub effect_metadata_buffer: BufferId,
+    pub batch_descriptor_buffer: BufferId,
 }
 
 struct CachedBindGroup<K: Eq> {
@@ -4818,6 +4826,7 @@ impl EffectBindGroups {
         let key = InitMetadataBindGroupKey {
             buffer_index: effect_instance.buffer_index,
             effect_metadata_buffer: effect_metadata_buffer.id(),
+            batch_descriptor_buffer: batch_descriptor_buffer.id(),
             consume_event_key: consume_event_buffers.as_ref().map(Into::into),
         };
 
@@ -4933,7 +4942,7 @@ impl EffectBindGroups {
         effect_instance: &EffectInstance,
         render_device: &RenderDevice,
         layout: &BindGroupLayout,
-        render_batch_descriptor_buffer: &Buffer,
+        batch_descriptor_buffer: &Buffer,
         render_batch_effect_index_buffer: &Buffer,
         effect_metadata_buffer: &Buffer,
         child_info_buffer: Option<&Buffer>,
@@ -4967,13 +4976,13 @@ impl EffectBindGroups {
         let key = UpdateMetadataBindGroupKey {
             buffer_index: effect_instance.buffer_index,
             effect_metadata_buffer: effect_metadata_buffer.id(),
+            batch_descriptor_buffer: batch_descriptor_buffer.id(),
             child_info_buffer_id,
             event_buffers_keys,
         };
 
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
-        let render_batch_descriptor_size =
-            GpuRenderBatchDescriptor::aligned_size(storage_alignment);
+        let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
         let make_entry = || {
             let mut entries = Vec::with_capacity(4 + event_buffers.len());
@@ -4982,9 +4991,9 @@ impl EffectBindGroups {
             entries.push(BindGroupEntry {
                 binding: 0,
                 resource: BindingResource::Buffer(BufferBinding {
-                    buffer: render_batch_descriptor_buffer,
+                    buffer: batch_descriptor_buffer,
                     offset: 0,
-                    size: Some(render_batch_descriptor_size),
+                    size: Some(batch_descriptor_size),
                 }),
             });
             // @group(3) @binding(1) var<storage, read> batch_effect_indices :
@@ -5098,6 +5107,7 @@ impl EffectBindGroups {
 
         let key = RenderMetadataBindGroupKey {
             buffer_index: effect_instance.buffer_index,
+            batch_descriptor_buffer: batch_descriptor_buffer.id(),
             effect_metadata_buffer: effect_metadata_buffer.id(),
         };
 
