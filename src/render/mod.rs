@@ -6624,7 +6624,15 @@ pub(crate) fn prepare_bind_groups(
                 layout: effect_instance.texture_layout.clone(),
                 textures: effect_instance.textures.iter().map(|h| h.id()).collect(),
             };
-            assert_eq!(material.layout.layout.len(), material.textures.len());
+            if material.layout.layout.len() != material.textures.len() {
+                error!(
+                    "Material has space for {} textures but {} textures are present. Disabling \
+                     effect.",
+                    material.layout.layout.len(),
+                    material.textures.len()
+                );
+                continue;
+            }
 
             //let bind_group_entries = material.make_entries(&gpu_images).unwrap();
             let Ok(bind_group_entries) = material.make_entries(&gpu_images) else {
