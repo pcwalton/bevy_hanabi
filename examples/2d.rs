@@ -1,7 +1,8 @@
 //! A particle system with a 2D camera.
 
-use bevy::{prelude::*, render::camera::ScalingMode};
+use bevy::{camera, prelude::*};
 use bevy_hanabi::prelude::*;
+use bevy_hanabi::prelude::Gradient;
 
 mod utils;
 use utils::*;
@@ -28,7 +29,7 @@ fn setup(
     // Spawn a 2D camera
     let mut proj = OrthographicProjection::default_2d();
     proj.scale = 1.0;
-    proj.scaling_mode = ScalingMode::FixedVertical {
+    proj.scaling_mode = camera::ScalingMode::FixedVertical {
         viewport_height: 1.,
     };
     commands.spawn((Camera2d, Projection::Orthographic(proj)));

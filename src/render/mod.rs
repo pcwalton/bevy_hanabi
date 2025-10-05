@@ -36,12 +36,11 @@ use bevy::{
         system::{lifetimeless::*, SystemParam, SystemState},
     },
     log::{info, trace},
+    mesh::MeshVertexBufferLayoutRef,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{
-        mesh::{
-            allocator::MeshAllocator, MeshVertexBufferLayoutRef, RenderMesh, RenderMeshBufferInfo,
-        },
+        mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo},
         render_asset::RenderAssets,
         render_graph::{Node, NodeRunError, RenderGraphContext, SlotInfo},
         render_phase::{
@@ -689,7 +688,7 @@ impl SpecializedComputePipeline for DispatchIndirectPipeline {
                 self.indirect_shader_noevent.clone()
             },
             shader_defs,
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
             zero_initialize_workgroup_memory: false,
         }
@@ -926,7 +925,7 @@ impl SpecializedComputePipeline for InitIndirectBatchPipeline {
             layout: vec![self.bind_group_layout.clone()],
             shader: self.shader.clone(),
             shader_defs: vec![],
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
             zero_initialize_workgroup_memory: false,
         }
@@ -947,7 +946,7 @@ impl SpecializedComputePipeline for IndirectBatchPipeline {
             layout: vec![self.bind_group_layout.clone()],
             shader: self.shader.clone(),
             shader_defs: vec![],
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
             zero_initialize_workgroup_memory: false,
         }
@@ -968,7 +967,7 @@ impl SpecializedComputePipeline for RenderBatchPipeline {
             layout: vec![self.bind_group_layout.clone()],
             shader: self.shader.clone(),
             shader_defs: vec![],
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
             zero_initialize_workgroup_memory: false,
         }
@@ -1191,7 +1190,7 @@ impl SpecializedComputePipeline for ParticlesInitPipeline {
             ],
             shader: key.shader,
             shader_defs,
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
             zero_initialize_workgroup_memory: false,
         }
@@ -1329,7 +1328,7 @@ impl SpecializedComputePipeline for ParticlesUpdatePipeline {
             ],
             shader: key.shader,
             shader_defs,
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: Vec::new(),
             zero_initialize_workgroup_memory: false,
         }
@@ -1923,14 +1922,14 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
             label: Some(label.into()),
             vertex: VertexState {
                 shader: key.shader.clone(),
-                entry_point: "vertex".into(),
+                entry_point: Some("vertex".into()),
                 shader_defs: shader_defs.clone(),
                 buffers: vec![vertex_buffer_layout.expect("Vertex buffer layout not present")],
             },
             fragment: Some(FragmentState {
                 shader: key.shader,
                 shader_defs,
-                entry_point: "fragment".into(),
+                entry_point: Some("fragment".into()),
                 targets: vec![Some(ColorTargetState {
                     format,
                     blend: Some(key.alpha_mode.into()),
@@ -2068,7 +2067,7 @@ pub(crate) struct EffectAssetEvents {
 /// This system runs in parallel of [`extract_effects`].
 pub(crate) fn extract_effect_events(
     mut events: ResMut<EffectAssetEvents>,
-    mut image_events: Extract<EventReader<AssetEvent<Image>>>,
+    mut image_events: Extract<MessageReader<AssetEvent<Image>>>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("extract_effect_events").entered();
@@ -2164,6 +2163,7 @@ pub(crate) struct RenderDebugSettings {
 /// from Bevy itself, if another Bevy system runs before this one).
 ///
 /// [`ParticleEffect`]: crate::ParticleEffect
+#[allow(unsafe_code)]
 pub(crate) fn extract_effects(
     real_time: Extract<Res<Time<Real>>>,
     virtual_time: Extract<Res<Time<Virtual>>>,
@@ -2206,7 +2206,9 @@ pub(crate) fn extract_effects(
 
         // Stop any pending capture if needed
         if render_debug_settings.captured_frames >= debug_settings.capture_frame_count {
-            render_device.wgpu_device().stop_capture();
+            unsafe {
+                render_device.wgpu_device().stop_graphics_debugger_capture();
+            }
             render_debug_settings.is_capturing = false;
             warn!(
                 "Stopped GPU debug capture after {} frames, at t={}s.",
@@ -2220,7 +2222,11 @@ pub(crate) fn extract_effects(
         if debug_settings.start_capture_this_frame
             || (debug_settings.start_capture_on_new_effect && !q_added_effects.is_empty())
         {
-            render_device.wgpu_device().start_capture();
+            unsafe {
+                render_device
+                    .wgpu_device()
+                    .start_graphics_debugger_capture();
+            }
             render_debug_settings.is_capturing = true;
             render_debug_settings.capture_start = real_time.elapsed();
             render_debug_settings.captured_frames = 0;
@@ -2252,7 +2258,7 @@ pub(crate) fn extract_effects(
             })
         }))
         .filter_map(|(entity, render_entity, compiled_effect)| {
-            let handle = compiled_effect.asset.clone_weak();
+            let handle = compiled_effect.asset.clone();
             let asset = match effects.get(&compiled_effect.asset) {
                 None => {
                     // The effect wasn't ready yet. Retry on subsequent frames.
@@ -2398,7 +2404,7 @@ pub(crate) fn extract_effects(
         extracted_effects.effects.push(ExtractedEffect {
             render_entity: *render_entity,
             main_entity: main_entity.into(),
-            handle: compiled_effect.asset.clone_weak(),
+            handle: compiled_effect.asset.clone(),
             particle_layout: asset.particle_layout().clone(),
             property_layout,
             property_data,
@@ -2760,7 +2766,7 @@ impl EffectsMeta {
         effect_metadata_buffer_table_id: BufferTableId,
     ) -> u32 {
         let spawner_base = self.spawner_buffer.len() as u32;
-        let transform = global_transform.compute_matrix().into();
+        let transform = global_transform.to_matrix().into();
         let inverse_transform = Mat4::from(
             // Inverse the Affine3A first, then convert to Mat4. This is a lot more
             // efficient than inversing the Mat4.
@@ -2829,7 +2835,7 @@ impl Default for LayoutFlags {
 /// Observer raised when the [`CachedEffect`] component is removed, which
 /// indicates that the effect instance was despawned.
 pub(crate) fn on_remove_cached_effect(
-    trigger: Trigger<OnRemove, CachedEffect>,
+    trigger: On<Remove, CachedEffect>,
     query: Query<(
         Entity,
         &MainEntity,
@@ -2860,7 +2866,7 @@ pub(crate) fn on_remove_cached_effect(
         _opt_props,
         _opt_parent,
         opt_cached_effect_events,
-    )) = query.get(trigger.target())
+    )) = query.get(trigger.event().entity)
     else {
         return;
     };

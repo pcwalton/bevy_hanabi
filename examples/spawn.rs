@@ -3,6 +3,7 @@ use bevy::{
     prelude::*,
     render::settings::{WgpuLimits, WgpuSettings},
 };
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;

@@ -2,6 +2,7 @@
 //! Spawns a random number of particles at random times.
 
 use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*};
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;

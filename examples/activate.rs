@@ -13,10 +13,9 @@
 //! [`KillAabbModifier`] to ensure the bubble particles never escape water, and
 //! are despawned when reaching the surface.
 
-use bevy::{
-    core_pipeline::tonemapping::Tonemapping, prelude::*, render::camera::ScalingMode,
-    text::TextFont,
-};
+use bevy::camera;
+use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*, text::TextFont};
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;
@@ -49,7 +48,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let mut projection = OrthographicProjection::default_3d();
-    projection.scaling_mode = ScalingMode::FixedVertical {
+    projection.scaling_mode = camera::ScalingMode::FixedVertical {
         viewport_height: 2.,
     };
     projection.scale = 1.0;

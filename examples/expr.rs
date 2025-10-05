@@ -7,10 +7,9 @@
 //! acceleration varies based on the simulation time by building an expression
 //! based on [`ExprWriter::time()`] then assigned to the [`AccelModifier`].
 
-use bevy::{
-    core_pipeline::{bloom::Bloom, tonemapping::Tonemapping},
-    prelude::*,
-};
+use bevy::render::view::Hdr;
+use bevy::{core_pipeline::tonemapping::Tonemapping, post_process::bloom::Bloom, prelude::*};
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;
@@ -32,12 +31,12 @@ fn setup(mut commands: Commands, mut effects: ResMut<Assets<EffectAsset>>) {
         Transform::from_translation(Vec3::new(3., 12., 20.)).looking_at(Vec3::Y * 5., Vec3::Y),
         Camera3d::default(),
         Camera {
-            hdr: true,
             clear_color: Color::BLACK.into(),
             ..default()
         },
         Tonemapping::None,
         Bloom::default(),
+        Hdr,
     ));
 
     let mut color_gradient = Gradient::new();

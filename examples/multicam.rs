@@ -1,12 +1,13 @@
 use std::f32::consts::FRAC_PI_2;
 
 use bevy::{
+    camera::{visibility::RenderLayers, Viewport},
     core_pipeline::tonemapping::Tonemapping,
     math::EulerRot,
     prelude::*,
-    render::{camera::Viewport, view::RenderLayers},
     window::WindowResized,
 };
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;
@@ -222,7 +223,7 @@ fn setup(
 
 fn update_camera_viewports(
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    mut resize_events: EventReader<WindowResized>,
+    mut resize_events: MessageReader<WindowResized>,
     mut query: Query<(&mut Camera, &SplitCamera)>,
 ) {
     // We need to dynamically resize the camera's viewports whenever the window size

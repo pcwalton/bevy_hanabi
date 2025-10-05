@@ -146,6 +146,8 @@ pub(crate) struct MockRenderer {
 impl MockRenderer {
     /// Create a new mock renderer with a default backend and adapter.
     pub fn new() -> Self {
+        use wgpu::MemoryBudgetThresholds;
+
         #[cfg(debug_assertions)]
         let flags = wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION;
         #[cfg(not(debug_assertions))]
@@ -158,6 +160,7 @@ impl MockRenderer {
             backends: wgpu::Backends::PRIMARY,
             flags,
             backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: MemoryBudgetThresholds::default(),
         });
         let adapter =
             futures::executor::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -168,8 +171,8 @@ impl MockRenderer {
             .expect("Failed to find an appropriate adapter");
 
         // Create the logical device and command queue
-        let (device, queue) = futures::executor::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
+        let (device, queue) =
+            futures::executor::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 // Request MAPPABLE_PRIMARY_BUFFERS to allow MAP_WRITE|COPY_DST.
                 // FIXME - Should use a separate buffer from primary to support more platforms.
                 required_features: wgpu::Features::MAPPABLE_PRIMARY_BUFFERS,
@@ -177,10 +180,8 @@ impl MockRenderer {
                 // Hanabi library uses the default requested mode of the app.
                 required_limits: wgpu::Limits::downlevel_defaults(),
                 ..Default::default()
-            },
-            None,
-        ))
-        .expect("Failed to create device");
+            }))
+            .expect("Failed to create device");
 
         // Turn into Bevy objects
         let device = RenderDevice::from(device);

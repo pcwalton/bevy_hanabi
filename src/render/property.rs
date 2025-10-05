@@ -6,7 +6,7 @@ use std::{
 use bevy::{
     log::{error, trace},
     platform::collections::HashMap,
-    prelude::{Component, Entity, OnRemove, Query, Res, ResMut, Resource, Trigger},
+    prelude::{Component, Entity, On, Query, Remove, Res, ResMut, Resource},
     render::{
         render_resource::{BindGroup, BindGroupLayout, Buffer},
         renderer::{RenderDevice, RenderQueue},
@@ -468,7 +468,7 @@ impl PropertyBindGroups {
 /// which indicates that the effect doesn't use properties anymore (including,
 /// when the effect itself is despawned).
 pub(crate) fn on_remove_cached_properties(
-    trigger: Trigger<OnRemove, CachedEffectProperties>,
+    trigger: On<Remove, CachedEffectProperties>,
     query: Query<(Entity, &CachedEffectProperties)>,
     mut property_cache: ResMut<PropertyCache>,
     mut property_bind_groups: ResMut<PropertyBindGroups>,
@@ -476,7 +476,7 @@ pub(crate) fn on_remove_cached_properties(
     // FIXME - review this Observer pattern; this triggers for each event one by
     // one, which could kill performance if many effects are removed.
 
-    let Ok((render_entity, cached_effect_properties)) = query.get(trigger.target()) else {
+    let Ok((render_entity, cached_effect_properties)) = query.get(trigger.event().entity) else {
         return;
     };
 

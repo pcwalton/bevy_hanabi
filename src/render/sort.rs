@@ -8,10 +8,11 @@ use bevy::{
     ecs::{resource::Resource, world::World},
     log::info,
     platform::collections::{hash_map::Entry, HashMap},
+    prelude::Shader,
     render::{
         render_resource::{
             BindGroup, BindGroupLayout, Buffer, BufferId, CachedComputePipelineId,
-            ComputePipelineDescriptor, PipelineCache, RawBufferVec, Shader, ShaderType,
+            ComputePipelineDescriptor, PipelineCache, RawBufferVec, ShaderType,
         },
         renderer::{RenderDevice, RenderQueue},
     },
@@ -197,7 +198,7 @@ impl SortBindGroups {
             shader: sort_shader,
             // TODO: Do we need to put some common shader defs in here?
             shader_defs: vec![],
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
             zero_initialize_workgroup_memory: false,
         });
@@ -306,7 +307,7 @@ impl SortBindGroups {
                 shader: sort_indirect_batch_shader,
                 // TODO: Do we need to put some common shader defs in here?
                 shader_defs: vec![],
-                entry_point: "main".into(),
+                entry_point: Some("main".into()),
                 push_constant_ranges: vec![],
                 zero_initialize_workgroup_memory: false,
             });
@@ -394,7 +395,7 @@ impl SortBindGroups {
                 layout: vec![sort_copy_bind_group_layout.clone()],
                 shader: sort_copy_shader,
                 shader_defs: vec![],
-                entry_point: "main".into(),
+                entry_point: Some("main".into()),
                 push_constant_ranges: vec![],
                 zero_initialize_workgroup_memory: false,
             });
@@ -559,7 +560,7 @@ impl SortBindGroups {
                         layout: vec![bind_group_layout.clone()],
                         shader: self.sort_fill_shader.clone(),
                         shader_defs: vec![],
-                        entry_point: "main".into(),
+                        entry_point: Some("main".into()),
                         push_constant_ranges: vec![],
                         zero_initialize_workgroup_memory: false,
                     });

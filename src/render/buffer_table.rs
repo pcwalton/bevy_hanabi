@@ -1074,7 +1074,7 @@ mod gpu_tests {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
-        device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::PollType::Wait);
         let result = futures::executor::block_on(rx);
         assert!(result.is_ok());
         slice.get_mapped_range()
@@ -1099,7 +1099,7 @@ mod gpu_tests {
         });
 
         // Poll device, checking for completion and raising callback
-        device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::PollType::Wait);
 
         // Wait for callback to be raised. This was need in previous versions, however
         // it's a bit unclear if it's still needed or if device.poll() is enough to

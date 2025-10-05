@@ -11,6 +11,7 @@
 
 use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*};
 use bevy_hanabi::prelude::*;
+use bevy_hanabi::prelude::Gradient;
 use rand::Rng;
 
 mod utils;

@@ -887,11 +887,6 @@ impl PartialReflect for Attribute {
     }
 
     #[inline]
-    fn clone_value(&self) -> Box<dyn PartialReflect> {
-        Box::new(*self)
-    }
-
-    #[inline]
     fn try_into_reflect(self: Box<Self>) -> Result<Box<dyn Reflect>, Box<dyn PartialReflect>> {
         Ok(self)
     }

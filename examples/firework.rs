@@ -17,10 +17,9 @@
 //! The particles also have a trail. The trail particles are stitched together
 //! to form an arc using [`EffectAsset::with_ribbons`].
 
-use bevy::{
-    core_pipeline::{bloom::Bloom, tonemapping::Tonemapping},
-    prelude::*,
-};
+use bevy::render::view::Hdr;
+use bevy::{core_pipeline::tonemapping::Tonemapping, post_process::bloom::Bloom, prelude::*};
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;
@@ -255,7 +254,6 @@ fn setup(mut commands: Commands, effects: ResMut<Assets<EffectAsset>>) {
         Transform::from_translation(Vec3::new(0., 20., 50.)),
         Camera3d::default(),
         Camera {
-            hdr: true,
             clear_color: Color::BLACK.into(),
             ..default()
         },
@@ -264,6 +262,7 @@ fn setup(mut commands: Commands, effects: ResMut<Assets<EffectAsset>>) {
             intensity: 0.5,
             ..default()
         },
+        Hdr,
     ));
 
     create_effect(commands, effects);

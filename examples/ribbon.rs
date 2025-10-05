@@ -14,10 +14,9 @@
 
 use bevy::math::vec4;
 use bevy::prelude::*;
-use bevy::{
-    core_pipeline::{bloom::Bloom, tonemapping::Tonemapping},
-    math::vec3,
-};
+use bevy::render::view::Hdr;
+use bevy::{core_pipeline::tonemapping::Tonemapping, math::vec3, post_process::bloom::Bloom};
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;
@@ -83,13 +82,13 @@ fn setup(mut commands: Commands, mut effects: ResMut<Assets<EffectAsset>>) {
     commands.spawn((
         Transform::from_translation(Vec3::new(0., 0., 50.)),
         Camera {
-            hdr: true,
             clear_color: Color::BLACK.into(),
             ..default()
         },
         Camera3d::default(),
         Tonemapping::None,
         Bloom::default(),
+        Hdr,
     ));
 
     let writer = ExprWriter::new();

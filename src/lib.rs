@@ -184,10 +184,11 @@ use std::fmt::Write as _;
 
 use bevy::{
     asset::AsAssetId,
+    camera::visibility::VisibilityClass,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{
-        extract_component::ExtractComponent, sync_world::SyncToRenderWorld, view::VisibilityClass,
+        extract_component::ExtractComponent, sync_world::SyncToRenderWorld,
     },
 };
 use rand::{Rng, SeedableRng as _};
@@ -653,7 +654,7 @@ pub struct EffectVisibilityClass;
     VisibilityClass,
     SyncToRenderWorld
 )]
-#[component(on_add = bevy::render::view::add_visibility_class::<EffectVisibilityClass>)]
+#[component(on_add = bevy::camera::visibility::add_visibility_class::<EffectVisibilityClass>)]
 pub struct ParticleEffect {
     /// Handle of the effect to instantiate.
     pub handle: Handle<EffectAsset>,
@@ -1820,7 +1821,7 @@ mod tests {
             },
             AssetServerMode, UnapprovedPathMode,
         },
-        render::view::{VisibilityPlugin, VisibilitySystems},
+        camera::visibility::{VisibilityPlugin, VisibilitySystems},
         tasks::{IoTaskPool, TaskPoolBuilder},
     };
     use naga_oil::compose::{Composer, NagaModuleDescriptor, ShaderDefValue};
@@ -2152,8 +2153,10 @@ else { return c1; }
                 let mut dummy_app = App::new();
                 dummy_app.init_resource::<Assets<Shader>>();
                 dummy_app.add_plugins(bevy::render::view::ViewPlugin);
-                let shaders = dummy_app.world().get_resource::<Assets<Shader>>().unwrap();
-                let view_shader = shaders.get(&bevy::render::view::VIEW_TYPE_HANDLE).unwrap();
+                let asset_server = dummy_app.world().resource::<AssetServer>();
+                let view_shader_handle = asset_server.load("embedded://bevy_render/view/view.wgsl");
+                let shaders = dummy_app.world().resource::<Assets<Shader>>();
+                let view_shader = shaders.get(view_shader_handle.id()).unwrap();
 
                 let res = composer.add_composable_module(view_shader.into());
                 assert!(res.is_ok());

@@ -9,10 +9,9 @@
 //! which the distance to the camera is calculated. In this example, we
 //! therefore ensure that the rectangles in front and behind the particle effect
 //! do not overlap the bounding box of the effect itself.
-use bevy::{
-    core_pipeline::{bloom::Bloom, tonemapping::Tonemapping},
-    prelude::*,
-};
+use bevy::render::view::Hdr;
+use bevy::{core_pipeline::tonemapping::Tonemapping, post_process::bloom::Bloom, prelude::*};
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;
@@ -102,13 +101,13 @@ fn setup(
     commands.spawn((
         Transform::from_translation(Vec3::new(0., 0., 50.)),
         Camera {
-            hdr: true,
             clear_color: Color::BLACK.into(),
             ..default()
         },
         Camera3d::default(),
         Tonemapping::None,
         Bloom::default(),
+        Hdr,
     ));
 
     let effect1 = effects.add(make_firework());

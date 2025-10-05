@@ -13,6 +13,7 @@
 use std::time::Duration;
 
 use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*};
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;

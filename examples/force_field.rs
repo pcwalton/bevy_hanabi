@@ -15,6 +15,7 @@
 //! different depth, in front or behind the sphere.
 
 use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*};
+use bevy_hanabi::prelude::Gradient;
 use bevy_hanabi::prelude::*;
 
 mod utils;
@@ -50,7 +51,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let mut projection = OrthographicProjection::default_3d();
-    projection.scaling_mode = bevy::render::camera::ScalingMode::FixedVertical {
+    projection.scaling_mode = bevy::camera::ScalingMode::FixedVertical {
         viewport_height: 5.,
     };
     commands.spawn((
