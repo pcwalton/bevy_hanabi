@@ -268,14 +268,14 @@ pub trait ToWgslString {
 impl ToWgslString for f32 {
     fn to_wgsl_string(&self) -> String {
         let s = format!("{self:.6}");
-        s.trim_end_matches('0').to_string()
+        format!("{}f", s.trim_end_matches('0'))
     }
 }
 
 impl ToWgslString for f64 {
     fn to_wgsl_string(&self) -> String {
         let s = format!("{self:.15}");
-        s.trim_end_matches('0').to_string()
+        format!("{}f", s.trim_end_matches('0'))
     }
 }
 
