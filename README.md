@@ -1,6 +1,6 @@
 # Hanabi-Batched
 
-This is a temporary fork of [Bevy Hanabi](https://github.com/djeedai/bevy_hanabi/), a GPU-driven VFX system for [Bevy](http://bevyengine.org/) 0.16, with batching optimizations and other improvements that make it more suitable for production use in games.
+This is a temporary fork of [Bevy Hanabi](https://github.com/djeedai/bevy_hanabi/), a GPU-driven VFX system for [Bevy](http://bevyengine.org/) 0.17, with batching optimizations and other improvements that make it more suitable for production use in games.
 
 Hanabi is a capable system, but performance and other limitations prevent its use in many applications. This fork addresses these issues by providing the following improvements:
 
@@ -9,6 +9,8 @@ Hanabi is a capable system, but performance and other limitations prevent its us
 * *Additional performance improvements*: Hanabi-Batched features other, more localized, optimizations. For example, instead of using insertion sort for ribbon sorting, it uses heapsort, making ribbons usable in many more scenarios.
 
 * *More expression features*: More functionality is available in expressions, such as [`select`](https://www.w3.org/TR/WGSL/#select-builtin).
+
+* *Support for Bevy 0.17*.
 
 Hanabi-Batched intends to provide a compatible API to Hanabi, making it a drop-in replacement for games that need more performance and features than what upstream Hanabi provides.
 
