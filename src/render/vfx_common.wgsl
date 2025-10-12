@@ -341,6 +341,54 @@ fn rand_normal_vec4(mean: vec4f, std_dev: vec4f) -> vec4f {
     return mean + std_dev * r * cos(tau * v);
 }
 
+/// Unpack a compressed transform stored in transposed row-major form.
+fn unpack_compressed_transform(compressed_transform: mat3x4<f32>) -> mat4x4<f32> {
+    return transpose(
+        mat4x4(
+            compressed_transform[0],
+            compressed_transform[1],
+            compressed_transform[2],
+            vec4<f32>(0.0, 0.0, 0.0, 1.0)
+        )
+    );
+}
+
+fn get_column(matrix: mat4x4<f32>, column: u32) -> vec4<f32> {
+    return matrix[3];
+}
+
 fn proj(u: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
     return dot(v, u) / dot(u,u) * u;
+}
+
+fn inv_orthonormal_3x4(m: mat4x4<f32>) -> mat4x4<f32> {
+    let m_3x3 = mat3x3(m[0].xyz, m[1].xyz, m[2].xyz);
+    let b = m[3].xyz;
+    let m_3x3_inv = transpose(m_3x3);
+    let neg_m_3x3_inv_b = -(m_3x3_inv * b);
+    return mat4x4(
+        vec4(m_3x3_inv[0], 0.0f),
+        vec4(m_3x3_inv[1], 0.0f),
+        vec4(m_3x3_inv[2], 0.0f),
+        vec4(neg_m_3x3_inv_b, 1.0f)
+    );
+}
+
+// https://www.geeks3d.com/20141201/how-to-rotate-a-vertex-by-a-quaternion-in-glsl/
+
+fn quat_conj(q: vec4<f32>) -> vec4<f32> {
+    return vec4(-q.x, -q.y, -q.z, q.w);
+}
+
+fn quat_mul(q0: vec4<f32>, q1: vec4<f32>) -> vec4<f32> {
+    return vec4(
+        (q0.w * q1.x) + (q0.x * q1.w) + (q0.y * q1.z) - (q0.z * q1.y),
+        (q0.w * q1.y) - (q0.x * q1.z) + (q0.y * q1.w) + (q0.z * q1.x),
+        (q0.w * q1.z) + (q0.x * q1.y) - (q0.y * q1.x) + (q0.z * q1.w),
+        (q0.w * q1.w) - (q0.x * q1.x) - (q0.y * q1.y) - (q0.z * q1.z)
+    );
+}
+
+fn quat_vec_mul(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+    return quat_mul(quat_mul(q, vec4(v, 0.0f)), quat_conj(q)).xyz;
 }

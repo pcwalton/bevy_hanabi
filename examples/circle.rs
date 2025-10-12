@@ -6,8 +6,8 @@
 use std::f32::consts::FRAC_PI_2;
 
 use bevy::{core_pipeline::tonemapping::Tonemapping, prelude::*};
-use bevy_hanabi::prelude::*;
 use bevy_hanabi::prelude::Gradient;
+use bevy_hanabi::prelude::*;
 
 mod texutils;
 mod utils;

@@ -187,9 +187,7 @@ use bevy::{
     camera::visibility::VisibilityClass,
     platform::collections::{HashMap, HashSet},
     prelude::*,
-    render::{
-        extract_component::ExtractComponent, sync_world::SyncToRenderWorld,
-    },
+    render::{extract_component::ExtractComponent, sync_world::SyncToRenderWorld},
 };
 use rand::{Rng, SeedableRng as _};
 use serde::{Deserialize, Serialize};

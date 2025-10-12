@@ -1,8 +1,8 @@
 //! A particle system with a 2D camera.
 
 use bevy::{camera, prelude::*};
-use bevy_hanabi::prelude::*;
 use bevy_hanabi::prelude::Gradient;
+use bevy_hanabi::prelude::*;
 
 mod utils;
 use utils::*;

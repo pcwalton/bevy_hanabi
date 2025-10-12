@@ -74,7 +74,10 @@ impl SetVelocityCircleModifier {
             },
         )?;
 
-        let code = format!("{}(transform, &particle, effect_metadata_index);\n", func_name);
+        let code = format!(
+            "{}(transform, &particle, effect_metadata_index);\n",
+            func_name
+        );
 
         Ok(code)
     }
@@ -219,7 +222,10 @@ impl SetVelocityTangentModifier {
             },
         )?;
 
-        let code = format!("{}(transform, &particle, effect_metadata_index);\n", func_name);
+        let code = format!(
+            "{}(transform, &particle, effect_metadata_index);\n",
+            func_name
+        );
 
         Ok(code)
     }

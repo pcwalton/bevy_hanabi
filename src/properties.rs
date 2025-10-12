@@ -905,7 +905,13 @@ mod tests {
         assert_eq!(*p.default_value(), value);
         assert_eq!(p.value_type(), value.value_type());
         assert_eq!(p.size(), value.value_type().size());
-        assert_eq!(p.to_wgsl_string(), format!("properties[effect_metadata[effect_metadata_index].properties_index].{}", p.name()));
+        assert_eq!(
+            p.to_wgsl_string(),
+            format!(
+                "properties[effect_metadata[effect_metadata_index].properties_index].{}",
+                p.name()
+            )
+        );
     }
 
     #[test]

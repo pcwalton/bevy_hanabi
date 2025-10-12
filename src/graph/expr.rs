@@ -110,7 +110,7 @@ use thiserror::Error;
 
 use super::Value;
 use crate::{
-    Attribute, ModifierContext, ParticleLayout, Property, PropertyLayout, ScalarType,
+    Attribute, MatrixType, ModifierContext, ParticleLayout, Property, PropertyLayout, ScalarType,
     TextureLayout, TextureSlot, ToWgslString, ValueType, VectorType,
 };
 
@@ -1033,7 +1033,7 @@ impl Expr {
                 Ok(if op.is_functional() {
                     format!("{}({})", op.to_wgsl_string(), expr)
                 } else {
-                    format!("{}.{}", expr, op.to_wgsl_string())
+                    format!("({}).{}", expr, op.to_wgsl_string())
                 })
             }
             Expr::Binary { op, left, right } => {
@@ -1071,6 +1071,16 @@ impl Expr {
                                     3 => "vec3",
                                     4 => "vec4",
                                     _ => unreachable!(),
+                                }
+                            }
+                            ValueType::Matrix(matrix_type) => {
+                                match (matrix_type.rows(), matrix_type.cols()) {
+                                    (4, 4) => "mat4x4",
+                                    _ => {
+                                        return Err(ExprError::TypeError(
+                                            "Unsupported matrix type".to_string(),
+                                        ));
+                                    }
                                 }
                             }
                             _ => {
@@ -1531,6 +1541,7 @@ pub enum BuiltInOperator {
     ///
     /// Type: `bool`
     IsAlive,
+    WorldFromLocalTransform,
 }
 
 impl BuiltInOperator {
@@ -1571,6 +1582,7 @@ impl BuiltInOperator {
             },
             BuiltInOperator::AlphaCutoff => "alpha_cutoff",
             BuiltInOperator::IsAlive => "is_alive",
+            BuiltInOperator::WorldFromLocalTransform => "world_from_local_transform",
         }
     }
 
@@ -1586,6 +1598,7 @@ impl BuiltInOperator {
             BuiltInOperator::Rand(value_type) => *value_type,
             BuiltInOperator::AlphaCutoff => ValueType::Scalar(ScalarType::Float),
             BuiltInOperator::IsAlive => ValueType::Scalar(ScalarType::Bool),
+            BuiltInOperator::WorldFromLocalTransform => ValueType::Matrix(MatrixType::MAT4X4F),
         }
     }
 
@@ -1602,6 +1615,9 @@ impl ToWgslString for BuiltInOperator {
         match self {
             BuiltInOperator::Rand(_) => format!("{}()", self.name()),
             BuiltInOperator::IsAlive => "is_alive".to_string(),
+            BuiltInOperator::WorldFromLocalTransform => {
+                "unpack_compressed_transform(spawners[spawner_index].transform)".to_string()
+            }
             _ => format!("sim_params.{}", self.name()),
         }
     }
@@ -2100,6 +2116,8 @@ pub enum BinaryOperator {
     /// Given a 3-element vector `xyz` and a scalar value `w`, returns the
     /// vector `vec4(xyz, w)`.
     Vec4XyzW,
+
+    GetColumn,
 }
 
 impl BinaryOperator {
@@ -2132,7 +2150,8 @@ impl BinaryOperator {
             | BinaryOperator::UniformRand
             | BinaryOperator::NormalRand
             | BinaryOperator::Vec2
-            | BinaryOperator::Vec4XyzW => true,
+            | BinaryOperator::Vec4XyzW
+            | BinaryOperator::GetColumn => true,
         }
     }
 
@@ -2146,7 +2165,7 @@ impl BinaryOperator {
     pub fn needs_type_suffix(&self) -> bool {
         matches!(
             *self,
-            BinaryOperator::UniformRand | BinaryOperator::NormalRand
+            BinaryOperator::UniformRand | BinaryOperator::NormalRand | BinaryOperator::GetColumn
         )
     }
 }
@@ -2176,6 +2195,7 @@ impl ToWgslString for BinaryOperator {
             BinaryOperator::NormalRand => "rand_normal".to_string(),
             BinaryOperator::Vec2 => "vec2".to_string(),
             BinaryOperator::Vec4XyzW => "vec4".to_string(),
+            BinaryOperator::GetColumn => "get_column".to_string(),
         }
     }
 }
