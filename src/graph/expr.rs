@@ -2118,6 +2118,8 @@ pub enum BinaryOperator {
     Vec4XyzW,
 
     GetColumn,
+
+    Mat2x2,
 }
 
 impl BinaryOperator {
@@ -2151,7 +2153,8 @@ impl BinaryOperator {
             | BinaryOperator::NormalRand
             | BinaryOperator::Vec2
             | BinaryOperator::Vec4XyzW
-            | BinaryOperator::GetColumn => true,
+            | BinaryOperator::GetColumn
+            | BinaryOperator::Mat2x2 => true,
         }
     }
 
@@ -2196,6 +2199,7 @@ impl ToWgslString for BinaryOperator {
             BinaryOperator::Vec2 => "vec2".to_string(),
             BinaryOperator::Vec4XyzW => "vec4".to_string(),
             BinaryOperator::GetColumn => "get_column".to_string(),
+            BinaryOperator::Mat2x2 => "mat2x2".to_string(),
         }
     }
 }
