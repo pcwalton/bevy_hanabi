@@ -1032,6 +1032,8 @@ impl Expr {
 
                 Ok(if op.is_functional() {
                     format!("{}({})", op.to_wgsl_string(), expr)
+                } else if op.is_array_accessor() {
+                    format!("({})[{}]", expr, op.to_wgsl_string())
                 } else {
                     format!("({}).{}", expr, op.to_wgsl_string())
                 })
@@ -1542,6 +1544,7 @@ pub enum BuiltInOperator {
     /// Type: `bool`
     IsAlive,
     WorldFromLocalTransform,
+    LocalFromWorldTransform,
 }
 
 impl BuiltInOperator {
@@ -1583,6 +1586,7 @@ impl BuiltInOperator {
             BuiltInOperator::AlphaCutoff => "alpha_cutoff",
             BuiltInOperator::IsAlive => "is_alive",
             BuiltInOperator::WorldFromLocalTransform => "world_from_local_transform",
+            BuiltInOperator::LocalFromWorldTransform => "local_from_world_transform",
         }
     }
 
@@ -1599,6 +1603,7 @@ impl BuiltInOperator {
             BuiltInOperator::AlphaCutoff => ValueType::Scalar(ScalarType::Float),
             BuiltInOperator::IsAlive => ValueType::Scalar(ScalarType::Bool),
             BuiltInOperator::WorldFromLocalTransform => ValueType::Matrix(MatrixType::MAT4X4F),
+            BuiltInOperator::LocalFromWorldTransform => ValueType::Matrix(MatrixType::MAT4X4F),
         }
     }
 
@@ -1617,6 +1622,9 @@ impl ToWgslString for BuiltInOperator {
             BuiltInOperator::IsAlive => "is_alive".to_string(),
             BuiltInOperator::WorldFromLocalTransform => {
                 "unpack_compressed_transform(spawners[spawner_index].transform)".to_string()
+            }
+            BuiltInOperator::LocalFromWorldTransform => {
+                "unpack_compressed_transform(spawners[spawner_index].inverse_transform)".to_string()
             }
             _ => format!("sim_params.{}", self.name()),
         }
@@ -1890,6 +1898,8 @@ pub enum UnaryOperator {
     /// component.
     X,
 
+    Xyz,
+
     /// Get the second component of a vector.
     Y,
 
@@ -1908,6 +1918,17 @@ impl UnaryOperator {
     /// code emitted during evaluation of a binary operation expression.
     pub fn is_functional(&self) -> bool {
         !matches!(
+            *self,
+            UnaryOperator::X
+                | UnaryOperator::Y
+                | UnaryOperator::Z
+                | UnaryOperator::W
+                | UnaryOperator::Xyz
+        )
+    }
+
+    fn is_array_accessor(&self) -> bool {
+        matches!(
             *self,
             UnaryOperator::X | UnaryOperator::Y | UnaryOperator::Z | UnaryOperator::W
         )
@@ -1944,10 +1965,11 @@ impl ToWgslString for UnaryOperator {
             UnaryOperator::Tan => "tan".to_string(),
             UnaryOperator::Unpack4x8snorm => "unpack4x8snorm".to_string(),
             UnaryOperator::Unpack4x8unorm => "unpack4x8unorm".to_string(),
-            UnaryOperator::W => "w".to_string(),
-            UnaryOperator::X => "x".to_string(),
-            UnaryOperator::Y => "y".to_string(),
-            UnaryOperator::Z => "z".to_string(),
+            UnaryOperator::W => "3".to_string(),
+            UnaryOperator::X => "0".to_string(),
+            UnaryOperator::Xyz => "xyz".to_string(),
+            UnaryOperator::Y => "1".to_string(),
+            UnaryOperator::Z => "2".to_string(),
         }
     }
 }
@@ -2248,6 +2270,8 @@ pub enum TernaryOperator {
     /// Given three scalar elements `x`, `y`, and `z`, returns the vector
     /// consisting of those three elements `(x, y, z)`.
     Vec3,
+
+    Mat3x3,
 }
 
 impl ToWgslString for TernaryOperator {
@@ -2257,6 +2281,7 @@ impl ToWgslString for TernaryOperator {
             TernaryOperator::Select => "select".to_string(),
             TernaryOperator::SmoothStep => "smoothstep".to_string(),
             TernaryOperator::Vec3 => "vec3".to_string(),
+            TernaryOperator::Mat3x3 => "mat3x3".to_string(),
         }
     }
 }
