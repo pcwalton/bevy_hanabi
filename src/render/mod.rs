@@ -462,6 +462,7 @@ struct GpuRenderBatchMetadata {
     total_batch_count: u32,
     total_render_batches_requiring_sorting_count: u32,
     total_render_batches_with_events_count: u32,
+    total_particles_potentially_requiring_sorting_count: u32,
 }
 
 #[repr(C)]
@@ -2482,6 +2483,7 @@ pub struct EffectsMeta {
     /// for the indirect dispatch of the Update pass.
     update_dispatch_indirect_buffer: GpuBuffer<GpuDispatchIndirect>,
     sort_dispatch_indirect_buffer: RawBufferVec<GpuDispatchIndirect>,
+    sort_mergesort_dispatch_indirect_buffer: RawBufferVec<GpuDispatchIndirect>,
     /// Global shared GPU buffer storing the various `EffectMetadata`
     /// structs for the active effect instances.
     effect_metadata_buffer: BufferTable<GpuEffectMetadata>,
@@ -2502,6 +2504,7 @@ pub struct EffectsMeta {
     prepared_effects: MainEntityHashSet,
     total_batches_requiring_sorting_count: u32,
     total_batches_with_events_count: u32,
+    total_particles_potentially_requiring_sorting_count: u32,
     indexed_indirect_draw_command_buffer: RawBufferVec<GpuIndexedIndirectDrawCommand>,
     non_indexed_indirect_draw_command_buffer: RawBufferVec<GpuNonIndexedIndirectDrawCommand>,
     indirect_shader_noevent: Handle<Shader>,
@@ -2543,6 +2546,11 @@ impl EffectsMeta {
         let mut sort_dispatch_indirect_buffer =
             RawBufferVec::new(BufferUsages::STORAGE | BufferUsages::INDIRECT);
         sort_dispatch_indirect_buffer.set_label(Some("hanabi:buffer:sort_dispatch_indirect"));
+
+        let mut sort_mergesort_dispatch_indirect_buffer =
+            RawBufferVec::new(BufferUsages::STORAGE | BufferUsages::INDIRECT);
+        sort_mergesort_dispatch_indirect_buffer
+            .set_label(Some("hanabi:buffer:sort_mergesort_dispatch_indirect"));
 
         let mut effect_sort_metadata_buffer = RawBufferVec::new(BufferUsages::STORAGE);
         effect_sort_metadata_buffer.set_label(Some("hanabi:buffer:effect_sort_metadata"));
@@ -2595,6 +2603,7 @@ impl EffectsMeta {
                 Some("hanabi:buffer:update_dispatch_indirect".to_string()),
             ),
             sort_dispatch_indirect_buffer,
+            sort_mergesort_dispatch_indirect_buffer,
             effect_metadata_buffer: BufferTable::new(
                 BufferUsages::STORAGE | BufferUsages::INDIRECT,
                 NonZeroU64::new(item_align),
@@ -2610,6 +2619,7 @@ impl EffectsMeta {
             batch_descriptors_with_events_buffer,
             total_batches_requiring_sorting_count: 0,
             total_batches_with_events_count: 0,
+            total_particles_potentially_requiring_sorting_count: 0,
             indexed_indirect_draw_command_buffer,
             non_indexed_indirect_draw_command_buffer,
             prepared_effects: MainEntityHashSet::default(),
@@ -4242,6 +4252,7 @@ pub(crate) fn batch_effects(
         .non_indexed_indirect_draw_command_buffer
         .clear();
     effects_meta.sort_dispatch_indirect_buffer.clear();
+    effects_meta.sort_mergesort_dispatch_indirect_buffer.clear();
     effects_meta.update_dispatch_indirect_buffer.clear();
     effects_meta.sort_metadata_indices_buffer.clear();
     effects_meta.effect_sort_metadata_buffer.clear();
@@ -4283,6 +4294,9 @@ pub(crate) fn batch_effects(
             .sort_metadata_indices_buffer
             .push(effect_sort_metadata_index);
     }
+
+    // Reset the total number of particles potentially requiring sorting.
+    effects_meta.total_particles_potentially_requiring_sorting_count = 0;
 
     // Rebuild the batch buffers.
     for (_, effect_batch) in &mut sorted_effects.batches {
@@ -4442,6 +4456,8 @@ pub(crate) fn batch_effects(
 
                 let sort_buffer_range =
                     sort_bind_groups.allocate_sort_buffer_slots(effect_instance.slice.len() as u32);
+                effects_meta.total_particles_potentially_requiring_sorting_count +=
+                    effect_instance.slice.len() as u32;
 
                 effects_meta.effect_sort_metadata_buffer.set(
                     effect_sort_metadata_index,
@@ -4482,6 +4498,20 @@ pub(crate) fn batch_effects(
     let total_render_batches_requiring_sorting_count =
         effects_meta.total_batches_requiring_sorting_count;
     let total_render_batches_with_events_count = effects_meta.total_batches_with_events_count;
+    let total_particles_potentially_requiring_sorting_count =
+        effects_meta.total_particles_potentially_requiring_sorting_count;
+
+    // Make sure there's enough space in the sort dispatch indirect buffer for
+    // all the particles we'll be sorting.
+    let mergesort_dispatch_count =
+        sort::compute_mergesort_dispatch_count(total_particles_potentially_requiring_sorting_count);
+    while effects_meta.sort_mergesort_dispatch_indirect_buffer.len()
+        < mergesort_dispatch_count as usize
+    {
+        effects_meta
+            .sort_mergesort_dispatch_indirect_buffer
+            .push(default());
+    }
 
     effects_meta
         .render_batch_metadata_buffer
@@ -4489,6 +4519,7 @@ pub(crate) fn batch_effects(
             total_batch_count,
             total_render_batches_requiring_sorting_count,
             total_render_batches_with_events_count,
+            total_particles_potentially_requiring_sorting_count,
         });
 }
 
@@ -4525,6 +4556,11 @@ pub(crate) fn prepare_late_gpu_resources(
     );
     ensure_raw_buffer_nonempty_and_write(
         &mut effects_meta.sort_dispatch_indirect_buffer,
+        &render_device,
+        &render_queue,
+    );
+    ensure_raw_buffer_nonempty_and_write(
+        &mut effects_meta.sort_mergesort_dispatch_indirect_buffer,
         &render_device,
         &render_queue,
     );
@@ -4794,14 +4830,6 @@ pub struct EffectBindGroups {
         HashMap<RenderMetadataBindGroupLookupKey, CachedBindGroup<RenderMetadataBindGroupKey>>,
     /// Map from an effect material to its bind group.
     material_bind_groups: HashMap<Material, BindGroup>,
-}
-
-/// Identifies a bind group for effect metadata.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct EffectMetadataBindGroupKey {
-    /// The index of the buffer.
-    pub buffer_index: u32,
-    pub event_buffers_keys: Vec<BufferId>,
 }
 
 impl EffectBindGroups {
@@ -6529,6 +6557,10 @@ pub(crate) fn prepare_bind_groups(
                 .sort_dispatch_indirect_buffer
                 .buffer()
                 .expect("Sort dispatch indirect buffer must be present");
+            let sort_mergesort_dispatch_indirect_buffer = effects_meta
+                .sort_mergesort_dispatch_indirect_buffer
+                .buffer()
+                .expect("Mergesort dispatch indirect buffer must be present");
             let render_batch_metadata_buffer = effects_meta
                 .render_batch_metadata_buffer
                 .buffer()
@@ -6573,6 +6605,42 @@ pub(crate) fn prepare_bind_groups(
                 continue;
             }
 
+            let Some(sort_metadata_indices_buffer) =
+                effects_meta.sort_metadata_indices_buffer.buffer()
+            else {
+                error!("Sort metadata indices buffer not present; can't sort");
+                continue;
+            };
+
+            // Bind group @0 of mergesort-init pass
+            if let Err(err) = sort_bind_groups.ensure_sort_mergesort_init_bind_group(
+                effect_sort_metadata_buffer,
+                sort_metadata_indices_buffer,
+                effects_meta.sort_metadata_indices_buffer.len(),
+                sort_mergesort_dispatch_indirect_buffer,
+                render_batch_metadata_buffer,
+            ) {
+                error!(
+                    "Failed to create mergesort-init bind group @0 for ribbon effect: {:?}",
+                    err
+                );
+                continue;
+            }
+
+            // Bind group @0 of mergesort-pass pass
+            if let Err(err) = sort_bind_groups.ensure_sort_mergesort_pass_bind_group(
+                effect_sort_metadata_buffer,
+                sort_metadata_indices_buffer,
+                effects_meta.sort_metadata_indices_buffer.len(),
+                render_batch_metadata_buffer,
+            ) {
+                error!(
+                    "Failed to create mergesort-pass bind group @0 for ribbon effect: {:?}",
+                    err
+                );
+                continue;
+            }
+
             // Bind group @0 of sort-copy pass
             let indirect_index_buffer = effect_buffer.indirect_index_buffer();
             if let Err(err) = sort_bind_groups.ensure_sort_copy_bind_group(
@@ -6584,25 +6652,6 @@ pub(crate) fn prepare_bind_groups(
             ) {
                 error!(
                     "Failed to create sort-copy bind group @0 for ribbon effect: {:?}",
-                    err
-                );
-                continue;
-            }
-
-            let Some(sort_metadata_indices_buffer) =
-                effects_meta.sort_metadata_indices_buffer.buffer()
-            else {
-                error!("Sort metadata indices buffer not present; can't sort");
-                continue;
-            };
-
-            if let Err(err) = sort_bind_groups.ensure_sort_bind_group(
-                effect_sort_metadata_buffer,
-                sort_metadata_indices_buffer,
-                effects_meta.sort_metadata_indices_buffer.len(),
-            ) {
-                error!(
-                    "failed to create sort bind group @0 for ribbon effect: {:?}",
                     err
                 );
                 continue;
@@ -7717,12 +7766,14 @@ impl Node for VfxSimulateNode {
                     compute_pass.pop_debug_group();
                 }
 
-                // Do the actual sort
+                // Do the mergesort init.
                 {
-                    compute_pass.push_debug_group("hanabi:sort");
+                    compute_pass.push_debug_group("hanabi:sort_mergesort_init");
 
                     if compute_pass
-                        .set_cached_compute_pipeline(sort_bind_groups.sort_pipeline_id())
+                        .set_cached_compute_pipeline(
+                            sort_bind_groups.get_mergesort_init_pipeline_id(),
+                        )
                         .is_err()
                     {
                         compute_pass.pop_debug_group();
@@ -7730,13 +7781,75 @@ impl Node for VfxSimulateNode {
                         return Ok(());
                     }
 
-                    if let Some(sort_bind_group) = sort_bind_groups.sort_bind_group() {
-                        compute_pass.set_bind_group(0, sort_bind_group, &[]);
+                    if let (
+                        Some(effects_sort_metadata_indices_buffer),
+                        Some(mergesort_dispatch_indirect_buffer),
+                    ) = (
+                        effects_meta.sort_metadata_indices_buffer.buffer(),
+                        effects_meta
+                            .sort_mergesort_dispatch_indirect_buffer
+                            .buffer(),
+                    ) {
+                        if let Some(sort_mergesort_init_bind_group) = sort_bind_groups
+                            .sort_mergesort_init_bind_group(
+                                effect_sort_metadata_buffer.id(),
+                                effects_sort_metadata_indices_buffer.id(),
+                                mergesort_dispatch_indirect_buffer.id(),
+                            )
+                        {
+                            compute_pass.set_bind_group(0, sort_mergesort_init_bind_group, &[]);
 
-                        const WORKGROUP_SIZE: u32 = 64;
-                        let spawn_count = sort_metadata_index_count.div_ceil(WORKGROUP_SIZE);
-                        compute_pass.dispatch_workgroups(spawn_count, 1, 1);
-                        trace!("Dispatched sort");
+                            compute_pass.dispatch_workgroups(1, 1, 1);
+                        }
+                    }
+
+                    compute_pass.pop_debug_group();
+                }
+
+                // Do the actual mergesort.
+                {
+                    compute_pass.push_debug_group("hanabi:sort_mergesort_pass");
+
+                    if compute_pass
+                        .set_cached_compute_pipeline(
+                            sort_bind_groups.get_mergesort_pass_pipeline_id(),
+                        )
+                        .is_err()
+                    {
+                        compute_pass.pop_debug_group();
+                        // FIXME - Bevy doesn't allow returning custom errors here...
+                        return Ok(());
+                    }
+
+                    if let (
+                        Some(mergesort_dispatch_indirect_buffer),
+                        Some(effects_sort_metadata_indices_buffer),
+                    ) = (
+                        effects_meta
+                            .sort_mergesort_dispatch_indirect_buffer
+                            .buffer(),
+                        effects_meta.sort_metadata_indices_buffer.buffer(),
+                    ) {
+                        if let Some(sort_mergesort_pass_bind_group) = sort_bind_groups
+                            .sort_mergesort_pass_bind_group(
+                                effect_sort_metadata_buffer.id(),
+                                effects_sort_metadata_indices_buffer.id(),
+                            )
+                        {
+                            compute_pass.set_bind_group(0, sort_mergesort_pass_bind_group, &[]);
+
+                            let mergesort_pass_count = sort::compute_mergesort_dispatch_count(
+                                effects_meta.total_particles_potentially_requiring_sorting_count,
+                            );
+
+                            for pass_index in 0..mergesort_pass_count {
+                                compute_pass.set_push_constants(0, bytemuck::bytes_of(&pass_index));
+                                compute_pass.dispatch_workgroups_indirect(
+                                    mergesort_dispatch_indirect_buffer,
+                                    12 * pass_index as u64,
+                                );
+                            }
+                        }
                     }
 
                     compute_pass.pop_debug_group();

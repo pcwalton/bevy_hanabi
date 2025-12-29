@@ -350,8 +350,9 @@ impl Plugin for HanabiPlugin {
             init_indirect_batch_shader,
             sort_indirect_batch_shader,
             sort_fill_shader,
-            sort_shader,
             sort_copy_shader,
+            sort_mergesort_init_shader,
+            sort_mergesort_pass_shader,
         ) = {
             let align = render_device.limits().min_storage_buffer_offset_alignment;
             let indirect_shader_noevent = HanabiPlugin::make_indirect_shader(align, false);
@@ -392,20 +393,28 @@ impl Plugin for HanabiPlugin {
                     .join("render/vfx_sort_fill.wgsl")
                     .to_string_lossy(),
             );
-            let sort_shader = Shader::from_wgsl(
-                include_str!("render/vfx_sort.wgsl"),
-                std::path::Path::new(file!())
-                    .parent()
-                    .unwrap()
-                    .join("render/vfx_sort.wgsl")
-                    .to_string_lossy(),
-            );
             let sort_copy_shader = Shader::from_wgsl(
                 include_str!("render/vfx_sort_copy.wgsl"),
                 std::path::Path::new(file!())
                     .parent()
                     .unwrap()
                     .join("render/vfx_sort_copy.wgsl")
+                    .to_string_lossy(),
+            );
+            let sort_mergesort_init_shader = Shader::from_wgsl(
+                include_str!("render/vfx_sort_mergesort_init.wgsl"),
+                std::path::Path::new(file!())
+                    .parent()
+                    .unwrap()
+                    .join("render/vfx_sort_mergesort_init.wgsl")
+                    .to_string_lossy(),
+            );
+            let sort_mergesort_pass_shader = Shader::from_wgsl(
+                include_str!("render/vfx_sort_mergesort_pass.wgsl"),
+                std::path::Path::new(file!())
+                    .parent()
+                    .unwrap()
+                    .join("render/vfx_sort_mergesort_pass.wgsl")
                     .to_string_lossy(),
             );
 
@@ -417,8 +426,9 @@ impl Plugin for HanabiPlugin {
             let init_indirect_batch_shader = assets.add(init_indirect_batch_shader);
             let sort_indirect_batch_shader = assets.add(sort_indirect_batch_shader);
             let sort_fill_shader = assets.add(sort_fill_shader);
-            let sort_shader = assets.add(sort_shader);
             let sort_copy_shader = assets.add(sort_copy_shader);
+            let sort_mergesort_init_shader = assets.add(sort_mergesort_init_shader);
+            let sort_mergesort_pass_shader = assets.add(sort_mergesort_pass_shader);
 
             (
                 indirect_shader_noevent,
@@ -428,8 +438,9 @@ impl Plugin for HanabiPlugin {
                 init_indirect_batch_shader,
                 sort_indirect_batch_shader,
                 sort_fill_shader,
-                sort_shader,
                 sort_copy_shader,
+                sort_mergesort_init_shader,
+                sort_mergesort_pass_shader,
             )
         };
 
@@ -451,8 +462,9 @@ impl Plugin for HanabiPlugin {
             render_app.world_mut(),
             sort_indirect_batch_shader,
             sort_fill_shader,
-            sort_shader,
             sort_copy_shader,
+            sort_mergesort_init_shader,
+            sort_mergesort_pass_shader,
         );
 
         // Register the custom render pipeline

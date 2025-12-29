@@ -23,7 +23,7 @@ struct EffectSortMetadataAtomic {
     last_sort_buffer_index: atomic<u32>,
     // Index of the `IndirectDispatch` array in `dispatch_indirect_buffer`.
     indirect_command_index: u32,
-    pad: u32,
+    first_global_sort_index: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> sort_buffer : array<KeyValuePair>;
