@@ -194,6 +194,7 @@ struct BatchMetadata {
     total_batch_count: u32,
     total_render_batches_requiring_sorting_count: u32,
     total_render_batches_with_events_count: u32,
+    total_particles_potentially_requiring_sorting_count: u32,
 }
 
 struct BatchDescriptor {
@@ -229,7 +230,7 @@ struct EffectSortMetadata {
     last_sort_buffer_index: u32,
     // Index of the `IndirectDispatch` array in `dispatch_indirect_buffer`.
     indirect_command_index: u32,
-    pad: u32,
+    first_global_particle_index: u32,
 }
 
 /// Stride, in u32 count, between elements of an array<EffectMetadata>.
