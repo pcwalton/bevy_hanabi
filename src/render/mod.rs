@@ -4832,14 +4832,6 @@ pub struct EffectBindGroups {
     material_bind_groups: HashMap<Material, BindGroup>,
 }
 
-/// Identifies a bind group for effect metadata.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct EffectMetadataBindGroupKey {
-    /// The index of the buffer.
-    pub buffer_index: u32,
-    pub event_buffers_keys: Vec<BufferId>,
-}
-
 impl EffectBindGroups {
     pub fn particle_render(&self, buffer_index: u32) -> Option<&BindGroup> {
         self.particle_buffers
@@ -6664,18 +6656,6 @@ pub(crate) fn prepare_bind_groups(
                 );
                 continue;
             }
-
-            if let Err(err) = sort_bind_groups.ensure_sort_bind_group(
-                effect_sort_metadata_buffer,
-                sort_metadata_indices_buffer,
-                effects_meta.sort_metadata_indices_buffer.len(),
-            ) {
-                error!(
-                    "failed to create sort bind group @0 for ribbon effect: {:?}",
-                    err
-                );
-                continue;
-            }
         }
 
         // Ensure the particle texture(s) are available as GPU resources and that a bind
@@ -7785,33 +7765,6 @@ impl Node for VfxSimulateNode {
 
                     compute_pass.pop_debug_group();
                 }
-
-                /*
-                // Do the actual sort
-                {
-                    compute_pass.push_debug_group("hanabi:sort");
-
-                    if compute_pass
-                        .set_cached_compute_pipeline(sort_bind_groups.sort_pipeline_id())
-                        .is_err()
-                    {
-                        compute_pass.pop_debug_group();
-                        // FIXME - Bevy doesn't allow returning custom errors here...
-                        return Ok(());
-                    }
-
-                    if let Some(sort_bind_group) = sort_bind_groups.sort_bind_group() {
-                        compute_pass.set_bind_group(0, sort_bind_group, &[]);
-
-                        const WORKGROUP_SIZE: u32 = 64;
-                        let spawn_count = sort_metadata_index_count.div_ceil(WORKGROUP_SIZE);
-                        compute_pass.dispatch_workgroups(spawn_count, 1, 1);
-                        trace!("Dispatched sort");
-                    }
-
-                    compute_pass.pop_debug_group();
-                }
-                */
 
                 // Do the mergesort init.
                 {
