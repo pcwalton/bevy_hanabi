@@ -1,4 +1,7 @@
-// Pass.
+// A single pass of mergesort.
+//
+// There are always an even number of passes, so that we ping-pong back to the
+// right buffer.
 
 #import bevy_hanabi::vfx_common::{BatchMetadata, EffectSortMetadata}
 
@@ -43,37 +46,6 @@ fn compare_elements(
         return -1;
     }
     return 1;
-}
-
-fn cmpx(a: KeyValuePair, b: KeyValuePair) -> i32 {
-    if (a.key < b.key) {
-        return -1;
-    }
-    if (a.key > b.key) {
-        return 1;
-    }
-    if (a.key2 < b.key2) {
-        return -1;
-    }
-    if (a.key2 > b.key2) {
-        return 1;
-    }
-    return 0;
-}
-
-fn getx(start: u32, i: i32) -> KeyValuePair {
-    if ((pass_index & 1u) == 0u) {
-        return sort_buffer_b[i32(start) + i];
-    }
-    return sort_buffer_a[i32(start) + i];
-}
-
-fn setx(start: u32, i: i32, val: KeyValuePair) {
-    if ((pass_index & 1u) == 0u) {
-        sort_buffer_b[i32(start) + i] = val;
-    } else {
-        sort_buffer_a[i32(start) + i] = val;
-    }
 }
 
 @compute @workgroup_size(256)
@@ -122,39 +94,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         effect_first_sort_buffer_index;
 
     let this_index = global_particle_index - effect_first_global_particle_index;
-
-    /*
-    // Start insertion sort hack
-
-    if (this_index != 0u) {
-        return;
-    }
-
-    // Copy over.
-    for (var i = 0; i < i32(effect_sort_buffer_len); i += 1) {
-        if ((pass_index & 1u) == 0u) {
-            setx(effect_first_sort_buffer_index, i, sort_buffer_a[i32(effect_first_sort_buffer_index) + i]);
-        } else {
-            setx(effect_first_sort_buffer_index, i, sort_buffer_b[i32(effect_first_sort_buffer_index) + i]);
-        }
-    }
-
-    // Insertion sort.
-    var i = 1;
-    while (i < i32(effect_sort_buffer_len)) {
-        let x = getx(effect_first_sort_buffer_index, i);
-
-        var j = i;
-        while (j > 0 && cmpx(getx(effect_first_sort_buffer_index, j - 1), x) > 0) {
-            setx(effect_first_sort_buffer_index, j, getx(effect_first_sort_buffer_index, j - 1));
-            j -= 1;
-        }
-
-        setx(effect_first_sort_buffer_index, j, x);
-        i += 1;
-    }
-    */
-
     let this_sort_buffer_index = effect_first_sort_buffer_index + this_index;
 
     var this_element: KeyValuePair;
@@ -194,41 +133,12 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // slice start to produce the final index.
     var dest_index = this_index - this_slice_start;
 
+    // Binary search to find the spot in the other list.
     var search_index_low = min(that_slice_start, effect_sort_buffer_len);
     var search_index_high = min(that_slice_end, effect_sort_buffer_len);
     if (search_index_low != search_index_high) {
-        // FIXME: Make sure this is right in all cases!
         while (search_index_low < search_index_high) {
             let search_index_mid = search_index_low + (search_index_high - search_index_low) / 2;
-            let that_sort_buffer_index = effect_first_sort_buffer_index + search_index_mid;
-
-            // Fetch the element.
-            var that_element: KeyValuePair;
-            if ((pass_index & 1u) == 0u) {
-                that_element = sort_buffer_a[that_sort_buffer_index];
-            } else {
-                that_element = sort_buffer_b[that_sort_buffer_index];
-            }
-
-            let comparison = compare_elements(
-                &that_element,
-                search_index_mid,
-                &this_element,
-                this_index
-            );
-            if (comparison < 0) {
-                search_index_high = search_index_mid;
-            } else {
-                // `comparison` can't be 0.
-                search_index_low = search_index_mid + 1u;
-            }
-        }
-
-        dest_index += search_index_low - that_slice_start;
-
-        /*
-        var search_index_mid = search_index_low;
-        while (search_index_mid < search_index_high) {
             let that_sort_buffer_index = effect_first_sort_buffer_index + search_index_mid;
 
             // Fetch the element.
@@ -245,15 +155,15 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
                 &that_element,
                 search_index_mid
             );
-            if (comparison > 0) {
-                break;
+            if (comparison < 0) {
+                search_index_high = search_index_mid;
+            } else {
+                // `comparison` can't be 0.
+                search_index_low = search_index_mid + 1u;
             }
-
-            search_index_mid += 1u;
         }
 
-        dest_index += search_index_mid - that_slice_start;
-        */
+        dest_index += search_index_low - that_slice_start;
     }
 
     // Compute the final destination index and the sort buffer index.
@@ -265,7 +175,4 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     } else {
         sort_buffer_a[dest_sort_buffer_index] = this_element;
     }
-
-    // TODO(pcwalton): Add a special thing here that copies back to buffer A
-    // from buffer B after the final pass if we need to.
 }

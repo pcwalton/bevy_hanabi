@@ -1183,7 +1183,7 @@ impl SortBindGroups {
         sort_metadata_indices_count: usize,
         batch_metadata_buffer: &Buffer,
     ) -> Result<&BindGroup, ()> {
-        let (&Some(ref sort_buffer), &Some(ref sort_temp_buffer)) =
+        let (Some(sort_buffer), Some(sort_temp_buffer)) =
             (&self.sort_buffer.buffer(), &self.sort_temp_buffer.buffer())
         else {
             return Err(());
@@ -1532,10 +1532,13 @@ impl SortBindGroups {
 
 pub fn compute_mergesort_dispatch_count(particle_count: u32) -> u32 {
     if particle_count == 0 {
-        0
-    } else {
-        //32 - (particle_count - 1).leading_zeros()
-        // FIXME
-        20
+        return 0;
     }
+
+    let mut count = 32 - (particle_count - 1).leading_zeros();
+    // Add 1 if odd so that we copy back to the original ping-pong buffer.
+    if count % 2 == 1 {
+        count += 1;
+    }
+    count
 }
