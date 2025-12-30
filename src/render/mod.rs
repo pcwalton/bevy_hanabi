@@ -7786,6 +7786,7 @@ impl Node for VfxSimulateNode {
                     compute_pass.pop_debug_group();
                 }
 
+                /*
                 // Do the actual sort
                 {
                     compute_pass.push_debug_group("hanabi:sort");
@@ -7810,6 +7811,7 @@ impl Node for VfxSimulateNode {
 
                     compute_pass.pop_debug_group();
                 }
+                */
 
                 // Do the mergesort init.
                 {
@@ -7883,13 +7885,9 @@ impl Node for VfxSimulateNode {
                         {
                             compute_pass.set_bind_group(0, sort_mergesort_pass_bind_group, &[]);
 
-                            const WORKGROUP_SIZE: u32 = 256;
                             let mergesort_pass_count = sort::compute_mergesort_dispatch_count(
                                 effects_meta.total_particles_potentially_requiring_sorting_count,
                             );
-                            let mergesort_workgroup_count = effects_meta
-                                .total_particles_potentially_requiring_sorting_count
-                                .div_ceil(WORKGROUP_SIZE);
 
                             for pass_index in 0..mergesort_pass_count {
                                 compute_pass.set_push_constants(0, bytemuck::bytes_of(&pass_index));
