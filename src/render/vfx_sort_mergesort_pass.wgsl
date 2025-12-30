@@ -38,10 +38,50 @@ fn compare_elements(
     return i32(a_index) - i32(b_index);
 }
 
+fn cmpx(a: KeyValuePair, b: KeyValuePair) -> i32 {
+    if (a.key < b.key) {
+        return -1;
+    }
+    if (a.key > b.key) {
+        return 1;
+    }
+    if (a.key2 < b.key2) {
+        return -1;
+    }
+    if (a.key2 > b.key2) {
+        return 1;
+    }
+    return 0;
+}
+
+fn getx(start: u32, i: i32) -> KeyValuePair {
+    /*if ((pass_index & 1u) == 0u) {
+        return sort_buffer_b[i32(start) + i];
+    }*/
+    return sort_buffer_a[i32(start) + i];
+}
+
+fn setx(start: u32, i: i32, val: KeyValuePair) {
+    /*if ((pass_index & 1u) == 0u) {
+        sort_buffer_b[i32(start) + i] = val;
+    } else {*/
+        sort_buffer_a[i32(start) + i] = val;
+    //}
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let global_particle_index = global_invocation_id.x;
-    if (global_particle_index >= batch_metadata.total_particles_potentially_requiring_sorting_count) {
+
+    if (arrayLength(&sort_metadata_indices) == 0u) {
+        return;
+    }
+    let last_sort_metadata_index = sort_metadata_indices[arrayLength(&sort_metadata_indices) - 1u];
+    let last_global_particle_index =
+        effect_sort_metadata[last_sort_metadata_index].first_global_particle_index + 
+        effect_sort_metadata[last_sort_metadata_index].last_sort_buffer_index - 
+        effect_sort_metadata[last_sort_metadata_index].first_sort_buffer_index;
+    if (global_particle_index >= last_global_particle_index) {
         return;
     }
 
@@ -57,9 +97,9 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
                 effect_sort_metadata[metadata_index_mid].first_global_particle_index) {
             metadata_index_index_high = metadata_index_index_mid;
         } else if (global_particle_index >=
+                effect_sort_metadata[metadata_index_mid].first_global_particle_index +
                 effect_sort_metadata[metadata_index_mid].last_sort_buffer_index -
-                effect_sort_metadata[metadata_index_mid].first_sort_buffer_index +
-                effect_sort_metadata[metadata_index_mid].first_global_particle_index) {
+                effect_sort_metadata[metadata_index_mid].first_sort_buffer_index) {
             metadata_index_index_low = metadata_index_index_mid + 1u;
         } else {
             break;
@@ -75,6 +115,39 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         effect_first_sort_buffer_index;
 
     let this_index = global_particle_index - effect_first_global_particle_index;
+
+    // Start insertion sort hack
+
+    if (this_index != 0u) {
+        return;
+    }
+
+    // Copy over.
+    /*for (var i = 0; i < i32(effect_sort_buffer_len); i += 1) {
+        if ((pass_index & 1u) == 0u) {
+            setx(effect_first_sort_buffer_index, i, sort_buffer_a[i32(effect_first_sort_buffer_index) + i]);
+        } else {
+            setx(effect_first_sort_buffer_index, i, sort_buffer_b[i32(effect_first_sort_buffer_index) + i]);
+        }
+    }*/
+
+    // Insertion sort.
+    var i = 1;
+    while (i < i32(effect_sort_buffer_len)) {
+        let x = getx(effect_first_sort_buffer_index, i);
+
+        var j = i;
+        while (j > 0 && cmpx(getx(effect_first_sort_buffer_index, j - 1), x) > 0) {
+            setx(effect_first_sort_buffer_index, j, getx(effect_first_sort_buffer_index, j - 1));
+            j -= 1;
+        }
+
+        setx(effect_first_sort_buffer_index, j, x);
+        i += 1;
+    }
+
+#ifdef REAL
+
     let this_sort_buffer_index = effect_first_sort_buffer_index + this_index;
 
     var this_element: KeyValuePair;
@@ -184,4 +257,5 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 
     // TODO(pcwalton): Add a special thing here that copies back to buffer A
     // from buffer B after the final pass if we need to.
+#endif  // REAL
 }

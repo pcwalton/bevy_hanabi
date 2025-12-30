@@ -13,10 +13,10 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     for (var metadata_index_index = 0u;
             metadata_index_index < arrayLength(&sort_metadata_indices);
             metadata_index_index += 1u) {
-        effect_sort_metadata[metadata_index_index].first_global_particle_index =
-            total_particle_count;
-        total_particle_count += effect_sort_metadata[metadata_index_index].last_sort_buffer_index -
-            effect_sort_metadata[metadata_index_index].first_sort_buffer_index;
+        let metadata_index = sort_metadata_indices[metadata_index_index];
+        effect_sort_metadata[metadata_index].first_global_particle_index = total_particle_count;
+        total_particle_count += effect_sort_metadata[metadata_index].last_sort_buffer_index -
+            effect_sort_metadata[metadata_index].first_sort_buffer_index;
     }
 
     let workgroup_count = (total_particle_count + 255u) / 256u;

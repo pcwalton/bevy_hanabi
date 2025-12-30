@@ -7889,7 +7889,8 @@ impl Node for VfxSimulateNode {
                                 effects_meta.total_particles_potentially_requiring_sorting_count,
                             );
 
-                            for pass_index in 0..mergesort_pass_count {
+                            //for pass_index in 0..mergesort_pass_count {
+                            for pass_index in 0..1 {
                                 compute_pass.set_push_constants(0, bytemuck::bytes_of(&pass_index));
                                 compute_pass.dispatch_workgroups_indirect(
                                     mergesort_dispatch_indirect_buffer,
