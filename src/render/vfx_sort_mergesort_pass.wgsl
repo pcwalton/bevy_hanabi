@@ -27,15 +27,22 @@ fn compare_elements(
     b: ptr<function, KeyValuePair>,
     b_index: u32
 ) -> i32 {
-    var result = i32((*a).key) - i32((*b).key);
-    if (result != 0) {
-        return result;
+    if (a.key < b.key) {
+        return -1;
     }
-    result = i32((*a).key2) - i32((*b).key2);
-    if (result != 0) {
-        return result;
+    if (a.key > b.key) {
+        return 1;
     }
-    return i32(a_index) - i32(b_index);
+    if (a.key2 < b.key2) {
+        return -1;
+    }
+    if (a.key2 > b.key2) {
+        return 1;
+    }
+    if (a_index < b_index) {
+        return -1;
+    }
+    return 1;
 }
 
 fn cmpx(a: KeyValuePair, b: KeyValuePair) -> i32 {
@@ -55,18 +62,18 @@ fn cmpx(a: KeyValuePair, b: KeyValuePair) -> i32 {
 }
 
 fn getx(start: u32, i: i32) -> KeyValuePair {
-    /*if ((pass_index & 1u) == 0u) {
+    if ((pass_index & 1u) == 0u) {
         return sort_buffer_b[i32(start) + i];
-    }*/
+    }
     return sort_buffer_a[i32(start) + i];
 }
 
 fn setx(start: u32, i: i32, val: KeyValuePair) {
-    /*if ((pass_index & 1u) == 0u) {
+    if ((pass_index & 1u) == 0u) {
         sort_buffer_b[i32(start) + i] = val;
-    } else {*/
+    } else {
         sort_buffer_a[i32(start) + i] = val;
-    //}
+    }
 }
 
 @compute @workgroup_size(256)
@@ -123,13 +130,13 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     }
 
     // Copy over.
-    /*for (var i = 0; i < i32(effect_sort_buffer_len); i += 1) {
+    for (var i = 0; i < i32(effect_sort_buffer_len); i += 1) {
         if ((pass_index & 1u) == 0u) {
             setx(effect_first_sort_buffer_index, i, sort_buffer_a[i32(effect_first_sort_buffer_index) + i]);
         } else {
             setx(effect_first_sort_buffer_index, i, sort_buffer_b[i32(effect_first_sort_buffer_index) + i]);
         }
-    }*/
+    }
 
     // Insertion sort.
     var i = 1;
