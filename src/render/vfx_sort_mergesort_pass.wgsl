@@ -123,6 +123,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 
     let this_index = global_particle_index - effect_first_global_particle_index;
 
+    /*
     // Start insertion sort hack
 
     if (this_index != 0u) {
@@ -152,8 +153,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         setx(effect_first_sort_buffer_index, j, x);
         i += 1;
     }
-
-#ifdef REAL
+    */
 
     let this_sort_buffer_index = effect_first_sort_buffer_index + this_index;
 
@@ -264,5 +264,4 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 
     // TODO(pcwalton): Add a special thing here that copies back to buffer A
     // from buffer B after the final pass if we need to.
-#endif  // REAL
 }
