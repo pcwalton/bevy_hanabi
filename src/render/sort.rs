@@ -1534,6 +1534,8 @@ pub fn compute_mergesort_dispatch_count(particle_count: u32) -> u32 {
     if particle_count == 0 {
         0
     } else {
-        32 - (particle_count - 1).leading_zeros()
+        //32 - (particle_count - 1).leading_zeros()
+        // FIXME
+        20
     }
 }
