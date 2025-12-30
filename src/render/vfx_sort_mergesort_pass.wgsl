@@ -198,9 +198,8 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     var search_index_high = min(that_slice_end, effect_sort_buffer_len);
     if (search_index_low != search_index_high) {
         // FIXME: Make sure this is right in all cases!
-        /*
         while (search_index_low < search_index_high) {
-            search_index_mid = search_index_low + (search_index_high - search_index_low) / 2;
+            let search_index_mid = search_index_low + (search_index_high - search_index_low) / 2;
             let that_sort_buffer_index = effect_first_sort_buffer_index + search_index_mid;
 
             // Fetch the element.
@@ -212,10 +211,10 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
             }
 
             let comparison = compare_elements(
-                &this_element,
-                this_index,
                 &that_element,
-                search_index_mid
+                search_index_mid,
+                &this_element,
+                this_index
             );
             if (comparison < 0) {
                 search_index_high = search_index_mid;
@@ -223,7 +222,11 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
                 // `comparison` can't be 0.
                 search_index_low = search_index_mid + 1u;
             }
-        }*/
+        }
+
+        dest_index += search_index_low - that_slice_start;
+
+        /*
         var search_index_mid = search_index_low;
         while (search_index_mid < search_index_high) {
             let that_sort_buffer_index = effect_first_sort_buffer_index + search_index_mid;
@@ -250,6 +253,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         }
 
         dest_index += search_index_mid - that_slice_start;
+        */
     }
 
     // Compute the final destination index and the sort buffer index.
