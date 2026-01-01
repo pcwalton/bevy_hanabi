@@ -29,7 +29,7 @@ use crate::{
     render::{
         add_effects, batch_effects, debug_dump_buffers, extract_effect_events, extract_effects,
         fixup_parents, on_remove_cached_effect, on_remove_cached_properties, prepare_bind_groups,
-        prepare_effects, prepare_gpu_resources, prepare_late_gpu_resources,
+        prepare_effect_batches, prepare_effects, prepare_gpu_resources, prepare_late_gpu_resources,
         prepare_property_buffers, queue_effects, resolve_parents, update_mesh_locations,
         DebugSettings, DispatchIndirectPipeline, DrawEffects, EffectAssetEvents, EffectBindGroups,
         EffectCache, EffectsMeta, EventCache, ExtractedEffects, GpuBufferOperations,
@@ -520,6 +520,7 @@ impl Plugin for HanabiPlugin {
                             .after(bevy::render::mesh::allocator::allocate_and_free_meshes),
                         prepare_effects,
                         batch_effects,
+                        prepare_effect_batches,
                         prepare_late_gpu_resources,
                     )
                         .chain()

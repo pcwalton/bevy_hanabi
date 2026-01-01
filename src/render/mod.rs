@@ -1,7 +1,7 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     marker::PhantomData,
-    mem,
+    mem::{self, take},
     num::{NonZeroU32, NonZeroU64},
     ops::{Deref, DerefMut, Range},
     path::PathBuf,
@@ -2150,6 +2150,17 @@ pub(crate) struct RenderDebugSettings {
     dump_particles_to_csv: Option<PathBuf>,
 }
 
+type EffectExtractionQuery<'w> = (
+    Entity,
+    &'w RenderEntity,
+    Option<&'w InheritedVisibility>,
+    Option<&'w ViewVisibility>,
+    Ref<'w, SpawnCount>,
+    Ref<'w, CompiledParticleEffect>,
+    Option<Ref<'w, EffectProperties>>,
+    &'w GlobalTransform,
+);
+
 /// System extracting data for rendering of all active [`ParticleEffect`]
 /// components.
 ///
@@ -2174,22 +2185,13 @@ pub(crate) fn extract_effects(
     effects: Extract<Res<Assets<EffectAsset>>>,
     q_added_effects: Extract<
         Query<
-            (Entity, &RenderEntity, &CompiledParticleEffect),
+            (Entity, &RenderEntity, Ref<CompiledParticleEffect>),
             (Added<CompiledParticleEffect>, With<GlobalTransform>),
         >,
     >,
     q_effects: Extract<
         Query<
-            (
-                Entity,
-                &RenderEntity,
-                Option<&InheritedVisibility>,
-                Option<&ViewVisibility>,
-                Ref<SpawnCount>,
-                Ref<CompiledParticleEffect>,
-                Option<Ref<EffectProperties>>,
-                &GlobalTransform,
-            ),
+            EffectExtractionQuery,
             Or<(
                 Changed<InheritedVisibility>,
                 Changed<ViewVisibility>,
@@ -2200,7 +2202,7 @@ pub(crate) fn extract_effects(
             )>,
         >,
     >,
-    q_all_effects: Extract<Query<(&RenderEntity, &CompiledParticleEffect), With<GlobalTransform>>>,
+    q_all_effects: Extract<Query<EffectExtractionQuery>>,
     mut pending_effects: Local<Vec<MainEntity>>,
     render_device: Res<RenderDevice>,
     debug_settings: Extract<Res<DebugSettings>>,
@@ -2209,6 +2211,7 @@ pub(crate) fn extract_effects(
     mut extracted_effects: ResMut<ExtractedEffects>,
     mut render_debug_settings: ResMut<RenderDebugSettings>,
     mut removed_effects: Extract<RemovedComponents<CompiledParticleEffect>>,
+    mut reextract_next_frame: Local<MainEntityHashSet>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("extract_effects").entered();
@@ -2266,10 +2269,11 @@ pub(crate) fn extract_effects(
     // Collect added effects for later GPU data allocation
     extracted_effects.added_effects = q_added_effects
         .iter()
-        .chain(mem::take(&mut *pending_effects).into_iter().filter_map(|main_entity| {
-            q_all_effects.get(main_entity.id()).ok().map(|(render_entity, compiled_particle_effect)| {
-                (main_entity.id(), render_entity, compiled_particle_effect)
-            })
+        .chain(take(&mut *pending_effects).into_iter().filter_map(|main_entity| {
+            q_all_effects.get(main_entity.id()).ok().map(
+                |(_, render_entity, _, _, _, compiled_particle_effect, _, _)| {
+                    (main_entity.id(), render_entity, compiled_particle_effect)
+                })
         }))
         .filter_map(|(entity, render_entity, compiled_effect)| {
             let handle = compiled_effect.asset.clone();
@@ -2344,73 +2348,148 @@ pub(crate) fn extract_effects(
         transform,
     ) in q_effects.iter()
     {
-        extracted_effects
-            .effects
-            .remove(&MainEntity::from(main_entity));
+        extract_effect(
+            main_entity.into(),
+            render_entity,
+            maybe_inherited_visibility,
+            maybe_view_visibility,
+            &spawn_count,
+            &compiled_effect,
+            maybe_properties,
+            transform,
+            &q_all_effects,
+            &effects,
+            &mut extracted_effects,
+            &mut reextract_next_frame,
+        );
+    }
 
-        // Check if shaders are configured
-        let Some(effect_shaders) = compiled_effect.get_configured_shaders() else {
+    let to_reextract = take(&mut *reextract_next_frame);
+    for main_entity in to_reextract {
+        let Ok((
+            main_entity,
+            render_entity,
+            maybe_inherited_visibility,
+            maybe_view_visibility,
+            spawn_count,
+            compiled_effect,
+            maybe_properties,
+            transform,
+        )) = q_effects.get(main_entity.entity())
+        else {
             continue;
         };
+        extract_effect(
+            main_entity.into(),
+            render_entity,
+            maybe_inherited_visibility,
+            maybe_view_visibility,
+            &spawn_count,
+            &compiled_effect,
+            maybe_properties,
+            transform,
+            &q_all_effects,
+            &effects,
+            &mut extracted_effects,
+            &mut reextract_next_frame,
+        );
+    }
 
-        // Check if hidden, unless always simulated
-        if compiled_effect.simulation_condition == SimulationCondition::WhenVisible
-            && !maybe_inherited_visibility
-                .map(|cv| cv.get())
-                .unwrap_or(true)
-            && !maybe_view_visibility.map(|cv| cv.get()).unwrap_or(true)
-        {
-            continue;
+    // Only remove an effect if we didn't pick it up above.
+    // It's possible that a necessary component was removed and re-added in the
+    // same frame.
+    for main_entity in removed_effects.read() {
+        let main_entity = MainEntity::from(main_entity);
+        if !q_all_effects.contains(*main_entity) {
+            extracted_effects.effects.remove(&main_entity);
+            extracted_effects.dirty = true;
         }
+    }
+}
 
-        // Check if asset is available, otherwise silently ignore
-        let Some(asset) = effects.get(&compiled_effect.asset) else {
-            trace!(
-                "EffectAsset not ready; skipping ParticleEffect instance on entity {:?}.",
-                main_entity
-            );
-            continue;
-        };
+fn extract_effect(
+    main_entity: MainEntity,
+    render_entity: &RenderEntity,
+    maybe_inherited_visibility: Option<&InheritedVisibility>,
+    maybe_view_visibility: Option<&ViewVisibility>,
+    spawn_count: &SpawnCount,
+    compiled_effect: &CompiledParticleEffect,
+    maybe_properties: Option<Ref<EffectProperties>>,
+    transform: &GlobalTransform,
+    q_all_effects: &Query<EffectExtractionQuery>,
+    effects: &Assets<EffectAsset>,
+    extracted_effects: &mut ExtractedEffects,
+    reextract_next_frame: &mut MainEntityHashSet,
+) {
+    extracted_effects.effects.remove(&main_entity);
 
-        // Resolve the render entity of the parent, if any
-        let _parent = if let Some(main_entity) = compiled_effect.parent {
-            let Ok((_, render_entity, _, _, _, _, _, _)) = q_effects.get(main_entity) else {
-                error!(
-                    "Failed to resolve render entity of parent with main entity {:?}.",
-                    main_entity
-                );
-                continue;
-            };
-            Some(*render_entity)
-        } else {
-            None
-        };
+    // Check if shaders are configured
+    let Some(effect_shaders) = compiled_effect.get_configured_shaders() else {
+        reextract_next_frame.insert(main_entity);
+        return;
+    };
 
-        let property_layout = asset.property_layout();
-        let property_data = if let Some(properties) = maybe_properties {
-            // Note: must check that property layout is not empty, because the
-            // EffectProperties component is marked as changed when added but contains an
-            // empty Vec if there's no property, which would later raise an error if we
-            // don't return None here.
-            if properties.is_changed() && !property_layout.is_empty() {
-                trace!("Detected property change, re-serializing...");
-                Some(properties.serialize(&property_layout))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+    // Check if hidden, unless always simulated
+    if compiled_effect.simulation_condition == SimulationCondition::WhenVisible
+        && !maybe_inherited_visibility
+            .map(|cv| cv.get())
+            .unwrap_or(true)
+        && !maybe_view_visibility.map(|cv| cv.get()).unwrap_or(true)
+    {
+        reextract_next_frame.insert(main_entity);
+        return;
+    }
 
-        let texture_layout = asset.module().texture_layout();
-        let layout_flags = compiled_effect.layout_flags;
-        // let mesh = compiled_effect
-        //     .mesh
-        //     .clone()
-        //     .unwrap_or(default_mesh.0.clone());
-        let alpha_mode = compiled_effect.alpha_mode;
-
+    // Check if asset is available, otherwise silently ignore
+    let Some(asset) = effects.get(&compiled_effect.asset) else {
         trace!(
+            "EffectAsset not ready; skipping ParticleEffect instance on entity {:?}.",
+            main_entity
+        );
+        reextract_next_frame.insert(main_entity);
+        return;
+    };
+
+    // Resolve the render entity of the parent, if any
+    let _parent = if let Some(main_parent_entity) = compiled_effect.parent {
+        let Ok((_, render_entity, _, _, _, _, _, _)) = q_all_effects.get(main_parent_entity) else {
+            error!(
+                "Failed to resolve render entity of parent with main entity {:?}.",
+                main_parent_entity
+            );
+            reextract_next_frame.insert(main_entity);
+            return;
+        };
+        Some(*render_entity)
+    } else {
+        None
+    };
+
+    let property_layout = asset.property_layout();
+    let property_data = if let Some(properties) = maybe_properties {
+        // Note: must check that property layout is not empty, because the
+        // EffectProperties component is marked as changed when added but contains an
+        // empty Vec if there's no property, which would later raise an error if we
+        // don't return None here.
+        if properties.is_changed() && !property_layout.is_empty() {
+            trace!("Detected property change, re-serializing...");
+            Some(properties.serialize(&property_layout))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let texture_layout = asset.module().texture_layout();
+    let layout_flags = compiled_effect.layout_flags;
+    // let mesh = compiled_effect
+    //     .mesh
+    //     .clone()
+    //     .unwrap_or(default_mesh.0.clone());
+    let alpha_mode = compiled_effect.alpha_mode;
+
+    trace!(
             "Extracted instance of effect '{}' on entity {:?} (render entity {:?}): texture_layout_count={} texture_count={} layout_flags={:?}",
             asset.name,
             main_entity,
@@ -2420,39 +2499,27 @@ pub(crate) fn extract_effects(
             layout_flags,
         );
 
-        extracted_effects.effects.insert(
-            main_entity.into(),
-            ExtractedEffect {
-                render_entity: *render_entity,
-                main_entity: main_entity.into(),
-                handle: compiled_effect.asset.clone(),
-                particle_layout: asset.particle_layout().clone(),
-                property_layout,
-                property_data,
-                spawn_count: **spawn_count,
-                prng_seed: compiled_effect.prng_seed,
-                transform: *transform,
-                layout_flags,
-                texture_layout,
-                textures: compiled_effect.textures.clone(),
-                alpha_mode,
-                effect_shaders: effect_shaders.clone(),
-            },
-        );
+    extracted_effects.effects.insert(
+        main_entity,
+        ExtractedEffect {
+            render_entity: *render_entity,
+            main_entity,
+            handle: compiled_effect.asset.clone(),
+            particle_layout: asset.particle_layout().clone(),
+            property_layout,
+            property_data,
+            spawn_count: **spawn_count,
+            prng_seed: compiled_effect.prng_seed,
+            transform: *transform,
+            layout_flags,
+            texture_layout,
+            textures: compiled_effect.textures.clone(),
+            alpha_mode,
+            effect_shaders: effect_shaders.clone(),
+        },
+    );
 
-        extracted_effects.dirty = true;
-    }
-
-    // Only remove an effect if we didn't pick it up above.
-    // It's possible that a necessary component was removed and re-added in the
-    // same frame.
-    for main_entity in removed_effects.read() {
-        let main_entity = MainEntity::from(main_entity);
-        if !q_effects.contains(*main_entity) {
-            extracted_effects.effects.remove(&main_entity);
-            extracted_effects.dirty = true;
-        }
-    }
+    extracted_effects.dirty = true;
 }
 
 /// Various GPU limits and aligned sizes computed once and cached.
@@ -3500,7 +3567,7 @@ pub(crate) fn prepare_effects(
     mut effect_cache: ResMut<EffectCache>,
     mut effects_meta: ResMut<EffectsMeta>,
     mut effect_bind_groups: ResMut<EffectBindGroups>,
-    mut extracted_effects: ResMut<ExtractedEffects>,
+    extracted_effects: ResMut<ExtractedEffects>,
     mut prepared_effects: ResMut<PreparedEffects>,
     mut property_bind_groups: ResMut<PropertyBindGroups>,
     q_cached_effects: Query<(
@@ -3914,7 +3981,7 @@ pub(crate) fn prepare_effects(
             );
         } else {
             match prepared_effects.effects.get_mut(main_entity) {
-                Some(mut instance_input) => {
+                Some(instance_input) => {
                     instance_input.spawner_index = spawner_index;
                 }
                 None => {
@@ -4161,7 +4228,6 @@ pub(crate) fn prepare_effects(
 }
 
 pub(crate) fn batch_effects(
-    mut commands: Commands,
     mut effects_meta: ResMut<EffectsMeta>,
     mut sort_bind_groups: ResMut<SortBindGroups>,
     mut q_cached_effects: Query<(
@@ -4175,10 +4241,14 @@ pub(crate) fn batch_effects(
         &mut DispatchBufferIndices,
     )>,
     sorted_effect_batches: ResMut<SortedEffects>,
-    mut event_cache: ResMut<EventCache>,
     extracted_effects: Res<ExtractedEffects>,
     mut prepared_effects: ResMut<PreparedEffects>,
 ) {
+    if !extracted_effects.dirty {
+        trace!("skipping batch_effects, up to date");
+        return;
+    }
+
     trace!("batch_effects");
 
     let sorted_effects = sorted_effect_batches.into_inner();
@@ -4217,10 +4287,8 @@ pub(crate) fn batch_effects(
     // to batch them together to reduce draw calls.
     trace!("Batching {} effects...", q_cached_effects.iter().len());
 
-    sorted_effects.clear();
-    sort_bind_groups.clear_sort_buffer();
-
-    event_cache.clear_indirect_dispatch_buffer();
+    sorted_effects.instances.clear();
+    sorted_effects.batches.clear();
 
     for entity in effect_sorter
         .effects
@@ -4306,28 +4374,10 @@ pub(crate) fn batch_effects(
     }
 
     // Clear out the batch buffers.
-    effects_meta.total_batch_count = 0;
-    effects_meta.total_batches_requiring_sorting_count = 0;
-    effects_meta.total_batches_with_events_count = 0;
-    effects_meta.batch_effect_indices_buffer.clear();
-    effects_meta.batch_descriptor_buffer.clear();
-    effects_meta
-        .batch_descriptors_requiring_sorting_buffer
-        .clear();
-    effects_meta.batch_descriptors_with_events_buffer.clear();
-    effects_meta.indexed_indirect_draw_command_buffer.clear();
-    effects_meta
-        .non_indexed_indirect_draw_command_buffer
-        .clear();
-    effects_meta.sort_dispatch_indirect_buffer.clear();
-    effects_meta.sort_mergesort_dispatch_indirect_buffer.clear();
-    effects_meta.update_dispatch_indirect_buffer.clear();
     effects_meta.sort_metadata_indices_buffer.clear();
     effects_meta.effect_sort_metadata_buffer.clear();
 
     // Build the render batches.
-
-    sorted_effects.batches.clear();
 
     for (effect_instance_index, effect_instance) in sorted_effects.instances.iter_mut().enumerate()
     {
@@ -4362,6 +4412,39 @@ pub(crate) fn batch_effects(
             .sort_metadata_indices_buffer
             .push(effect_sort_metadata_index);
     }
+}
+
+pub(crate) fn prepare_effect_batches(
+    mut commands: Commands,
+    mut effects_meta: ResMut<EffectsMeta>,
+    mut sort_bind_groups: ResMut<SortBindGroups>,
+    sorted_effect_batches: ResMut<SortedEffects>,
+    mut event_cache: ResMut<EventCache>,
+) {
+    trace!("prepare_effect_batches");
+
+    let sorted_effects = sorted_effect_batches.into_inner();
+
+    // Clear out the batch buffers.
+    effects_meta.total_batch_count = 0;
+    effects_meta.total_batches_requiring_sorting_count = 0;
+    effects_meta.total_batches_with_events_count = 0;
+    effects_meta.batch_effect_indices_buffer.clear();
+    effects_meta.batch_descriptor_buffer.clear();
+    effects_meta
+        .batch_descriptors_requiring_sorting_buffer
+        .clear();
+    effects_meta.batch_descriptors_with_events_buffer.clear();
+    effects_meta.indexed_indirect_draw_command_buffer.clear();
+    effects_meta
+        .non_indexed_indirect_draw_command_buffer
+        .clear();
+    effects_meta.sort_dispatch_indirect_buffer.clear();
+    effects_meta.sort_mergesort_dispatch_indirect_buffer.clear();
+    effects_meta.update_dispatch_indirect_buffer.clear();
+
+    event_cache.clear_indirect_dispatch_buffer();
+    sort_bind_groups.clear_sort_buffer();
 
     // Reset the total number of particles potentially requiring sorting.
     effects_meta.total_particles_potentially_requiring_sorting_count = 0;

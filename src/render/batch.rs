@@ -114,9 +114,6 @@ pub(crate) struct SortedEffects {
     ///
     /// [`push()`]: Self::push
     pub(super) instances: Vec<EffectInstance>,
-    /// Index of the dispatch queue used for indirect fill dispatch and
-    /// submitted to [`GpuBufferOperations`].
-    pub(super) dispatch_queue_index: Option<u32>,
     /// Effect batches in the order they were inserted.
     pub(super) batches: IndexMap<EffectBatchKey, EffectBatch>,
 }
@@ -158,7 +155,6 @@ pub(crate) struct EffectBatch {
 impl SortedEffects {
     pub fn clear(&mut self) {
         self.instances.clear();
-        self.dispatch_queue_index = None;
         self.batches.clear();
     }
 
