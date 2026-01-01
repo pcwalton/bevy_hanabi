@@ -2056,6 +2056,7 @@ pub(crate) struct ExtractedEffects {
     pub effects: MainEntityHashMap<ExtractedEffect>,
     /// Newly added effects without a GPU allocation yet.
     pub added_effects: Vec<AddedEffect>,
+    pub dirty: bool,
 }
 
 #[derive(Default, Resource)]
@@ -2329,6 +2330,8 @@ pub(crate) fn extract_effects(
         })
         .collect();
 
+    extracted_effects.dirty = !extracted_effects.added_effects.is_empty();
+
     // Loop over all existing effects to extract them
     for (
         main_entity,
@@ -2436,6 +2439,8 @@ pub(crate) fn extract_effects(
                 effect_shaders: effect_shaders.clone(),
             },
         );
+
+        extracted_effects.dirty = true;
     }
 
     // Only remove an effect if we didn't pick it up above.
@@ -2445,6 +2450,7 @@ pub(crate) fn extract_effects(
         let main_entity = MainEntity::from(main_entity);
         if !q_effects.contains(*main_entity) {
             extracted_effects.effects.remove(&main_entity);
+            extracted_effects.dirty = true;
         }
     }
 }
@@ -3610,6 +3616,7 @@ pub(crate) fn prepare_effects(
 
     // Build batcher inputs from extracted effects, updating all cached components
     // for each effect on the fly.
+    let extracted_effects = extracted_effects.into_inner();
     let extracted_effect_count = extracted_effects.effects.len();
     let mut prepared_effect_count = 0;
     for extracted_effect in extracted_effects.effects.values_mut() {
@@ -3656,228 +3663,6 @@ pub(crate) fn prepare_effects(
         let mut rng = StdRng::seed_from_u64(extracted_effect.prng_seed as u64);
         extracted_effect.prng_seed = rng.gen();
 
-        let effect_slice = EffectSlice {
-            slice: cached_effect.slice.range(),
-            buffer_index: cached_effect.buffer_index,
-            particle_layout: cached_effect.slice.particle_layout.clone(),
-        };
-
-        let has_event_buffer = cached_child_info.is_some();
-        // FIXME: decouple "consumes event" from "reads parent particle" (here, p.layout
-        // should be Option<T>, not T)
-        let property_layout_min_binding_size = if extracted_effect.property_layout.is_empty() {
-            None
-        } else {
-            Some(extracted_effect.property_layout.min_binding_size())
-        };
-
-        // Create init pipeline key flags.
-        let init_pipeline_key_flags = {
-            let mut flags = ParticleInitPipelineKeyFlags::empty();
-            flags.set(
-                ParticleInitPipelineKeyFlags::ATTRIBUTE_PREV,
-                effect_slice.particle_layout.contains(Attribute::PREV),
-            );
-            flags.set(
-                ParticleInitPipelineKeyFlags::ATTRIBUTE_NEXT,
-                effect_slice.particle_layout.contains(Attribute::NEXT),
-            );
-            flags.set(
-                ParticleInitPipelineKeyFlags::CONSUME_GPU_SPAWN_EVENTS,
-                has_event_buffer,
-            );
-            flags
-        };
-
-        // This should always exist by the time we reach this point, because we should
-        // have inserted any property in the cache, which would have allocated the
-        // proper bind group layout (or the default no-property one).
-        let spawner_bind_group_layout = property_cache
-            .bind_group_layout(property_layout_min_binding_size)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Failed to find spawner@2 bind group layout for property binding size {:?}",
-                    property_layout_min_binding_size,
-                )
-            });
-        trace!(
-            "Retrieved spawner@2 bind group layout {:?} for property binding size {:?}.",
-            spawner_bind_group_layout.id(),
-            property_layout_min_binding_size
-        );
-
-        // Fetch the bind group layouts from the cache
-        trace!("cached_child_info={:?}", cached_child_info);
-        let parent_particle_layout_min_binding_size =
-            if let Some(cached_child) = cached_child_info.as_ref() {
-                let Ok((_, parent_cached_effect, _, _, _, _, _, _, _)) =
-                    q_cached_effects.get(cached_child.parent)
-                else {
-                    // At this point we should have discarded invalid effects with a missing parent,
-                    // so if the parent is not found this is a bug.
-                    error!(
-                        "Effect main_entity {:?}: parent render entity {:?} not found.",
-                        main_entity, cached_child.parent
-                    );
-                    continue;
-                };
-                Some(
-                    parent_cached_effect
-                        .slice
-                        .particle_layout
-                        .min_binding_size32(),
-                )
-            } else {
-                None
-            };
-        let Some(particle_bind_group_layout) = effect_cache.particle_bind_group_layout(
-            effect_slice.particle_layout.min_binding_size32(),
-            parent_particle_layout_min_binding_size,
-        ) else {
-            error!("Failed to find particle sim bind group @1 for min_binding_size={} parent_min_binding_size={:?}", 
-            effect_slice.particle_layout.min_binding_size32(), parent_particle_layout_min_binding_size);
-            continue;
-        };
-        let particle_bind_group_layout = particle_bind_group_layout.clone();
-        trace!(
-            "Retrieved particle@1 bind group layout {:?} for particle binding size {:?} and parent binding size {:?}.",
-            particle_bind_group_layout.id(),
-            effect_slice.particle_layout.min_binding_size32(),
-            parent_particle_layout_min_binding_size,
-        );
-
-        let particle_layout_min_binding_size = effect_slice.particle_layout.min_binding_size32();
-        let spawner_bind_group_layout = spawner_bind_group_layout.clone();
-
-        // Specialize the init pipeline based on the effect.
-        let init_pipeline_id = {
-            let consume_gpu_spawn_events = init_pipeline_key_flags
-                .contains(ParticleInitPipelineKeyFlags::CONSUME_GPU_SPAWN_EVENTS);
-
-            // Fetch the metadata@3 bind group layout from the cache
-            let metadata_bind_group_layout = effect_cache
-                .metadata_init_bind_group_layout(consume_gpu_spawn_events)
-                .unwrap()
-                .clone();
-
-            // https://github.com/bevyengine/bevy/issues/17132
-            let particle_bind_group_layout_id = particle_bind_group_layout.id();
-            let spawner_bind_group_layout_id = spawner_bind_group_layout.id();
-            let metadata_bind_group_layout_id = metadata_bind_group_layout.id();
-            pipelines.init_pipeline.temp_particle_bind_group_layout =
-                Some(particle_bind_group_layout.clone());
-            pipelines.init_pipeline.temp_spawner_bind_group_layout =
-                Some(spawner_bind_group_layout.clone());
-            pipelines.init_pipeline.temp_metadata_bind_group_layout =
-                Some(metadata_bind_group_layout);
-            let init_pipeline_id: CachedComputePipelineId = specialized_init_pipelines.specialize(
-                pipeline_cache,
-                &pipelines.init_pipeline,
-                ParticleInitPipelineKey {
-                    shader: extracted_effect.effect_shaders.init.clone(),
-                    particle_layout_min_binding_size,
-                    parent_particle_layout_min_binding_size,
-                    flags: init_pipeline_key_flags,
-                    particle_bind_group_layout_id,
-                    spawner_bind_group_layout_id,
-                    metadata_bind_group_layout_id,
-                },
-            );
-            // keep things tidy; this is just a hack, should not persist
-            pipelines.init_pipeline.temp_particle_bind_group_layout = None;
-            pipelines.init_pipeline.temp_spawner_bind_group_layout = None;
-            pipelines.init_pipeline.temp_metadata_bind_group_layout = None;
-            trace!("Init pipeline specialized: id={:?}", init_pipeline_id);
-
-            init_pipeline_id
-        };
-
-        let update_pipeline_id = {
-            let num_event_buffers = cached_parent_info
-                .map(|p| p.children.len() as u32)
-                .unwrap_or_default();
-
-            // FIXME: currently don't hava a way to determine when this is needed, because
-            // we know the number of children per parent only after resolving
-            // all parents, but by that point we forgot if this is a newly added
-            // effect or not. So since we need to re-ensure for all effects, not
-            // only new ones, might as well do here...
-            effect_cache.ensure_metadata_update_bind_group_layout(num_event_buffers);
-
-            // Fetch the bind group layouts from the cache
-            let metadata_bind_group_layout = effect_cache
-                .metadata_update_bind_group_layout(num_event_buffers)
-                .unwrap()
-                .clone();
-
-            // https://github.com/bevyengine/bevy/issues/17132
-            let particle_bind_group_layout_id = particle_bind_group_layout.id();
-            let spawner_bind_group_layout_id = spawner_bind_group_layout.id();
-            let metadata_bind_group_layout_id = metadata_bind_group_layout.id();
-            pipelines.update_pipeline.temp_particle_bind_group_layout =
-                Some(particle_bind_group_layout);
-            pipelines.update_pipeline.temp_spawner_bind_group_layout =
-                Some(spawner_bind_group_layout);
-            pipelines.update_pipeline.temp_metadata_bind_group_layout =
-                Some(metadata_bind_group_layout);
-            let update_pipeline_id = specialized_update_pipelines.specialize(
-                pipeline_cache,
-                &pipelines.update_pipeline,
-                ParticleUpdatePipelineKey {
-                    shader: extracted_effect.effect_shaders.update.clone(),
-                    particle_layout: effect_slice.particle_layout.clone(),
-                    parent_particle_layout_min_binding_size,
-                    num_event_buffers,
-                    particle_bind_group_layout_id,
-                    spawner_bind_group_layout_id,
-                    metadata_bind_group_layout_id,
-                },
-            );
-            // keep things tidy; this is just a hack, should not persist
-            pipelines.update_pipeline.temp_particle_bind_group_layout = None;
-            pipelines.update_pipeline.temp_spawner_bind_group_layout = None;
-            pipelines.update_pipeline.temp_metadata_bind_group_layout = None;
-            trace!("Update pipeline specialized: id={:?}", update_pipeline_id);
-
-            update_pipeline_id
-        };
-
-        let init_and_update_pipeline_ids = InitAndUpdatePipelineIds {
-            init: init_pipeline_id,
-            update: update_pipeline_id,
-        };
-
-        // For ribbons, which need particle sorting, create a bind group layout for
-        // sorting the effect, based on its particle layout.
-        if extracted_effect.layout_flags.contains(LayoutFlags::RIBBONS) {
-            if let Err(err) = sort_bind_groups.ensure_sort_fill_bind_group_layout(
-                pipeline_cache,
-                &extracted_effect.particle_layout,
-            ) {
-                error!(
-                    "Failed to create bind group for ribbon effect sorting: {:?}",
-                    err
-                );
-                continue;
-            }
-        }
-
-        // Create the metadata bind group layout for the render phase.
-        effect_cache.ensure_metadata_render_bind_group_layout();
-
-        // Output some debug info
-        trace!("init_shader = {:?}", extracted_effect.effect_shaders.init);
-        trace!(
-            "update_shader = {:?}",
-            extracted_effect.effect_shaders.update
-        );
-        trace!(
-            "render_shader = {:?}",
-            extracted_effect.effect_shaders.render
-        );
-        trace!("layout_flags = {:?}", extracted_effect.layout_flags);
-        trace!("particle_layout = {:?}", effect_slice.particle_layout);
-
         let spawner_index = effects_meta.allocate_spawner(
             &extracted_effect.transform,
             extracted_effect.spawn_count,
@@ -3885,23 +3670,261 @@ pub(crate) fn prepare_effects(
             dispatch_buffer_indices.effect_metadata_buffer_table_id,
         );
 
-        trace!(
-            "Updating cached effect at entity {:?}...",
-            extracted_effect.render_entity.id()
-        );
+        if extracted_effects.dirty {
+            let effect_slice = EffectSlice {
+                slice: cached_effect.slice.range(),
+                buffer_index: cached_effect.buffer_index,
+                particle_layout: cached_effect.slice.particle_layout.clone(),
+            };
 
-        prepared_effects.effects.insert(
-            *main_entity,
-            InstanceInput {
-                effect_slice: effect_slice.clone(),
-                init_and_update_pipeline_ids,
-                event_buffer_index: cached_effect_events.map(|cee| cee.buffer_index),
-                child_effects: cached_parent_info
-                    .map(|cp| cp.children.clone())
-                    .unwrap_or_default(),
-                spawner_index,
-            },
-        );
+            let has_event_buffer = cached_child_info.is_some();
+            // FIXME: decouple "consumes event" from "reads parent particle" (here, p.layout
+            // should be Option<T>, not T)
+            let property_layout_min_binding_size = if extracted_effect.property_layout.is_empty() {
+                None
+            } else {
+                Some(extracted_effect.property_layout.min_binding_size())
+            };
+
+            // Create init pipeline key flags.
+            let init_pipeline_key_flags = {
+                let mut flags = ParticleInitPipelineKeyFlags::empty();
+                flags.set(
+                    ParticleInitPipelineKeyFlags::ATTRIBUTE_PREV,
+                    effect_slice.particle_layout.contains(Attribute::PREV),
+                );
+                flags.set(
+                    ParticleInitPipelineKeyFlags::ATTRIBUTE_NEXT,
+                    effect_slice.particle_layout.contains(Attribute::NEXT),
+                );
+                flags.set(
+                    ParticleInitPipelineKeyFlags::CONSUME_GPU_SPAWN_EVENTS,
+                    has_event_buffer,
+                );
+                flags
+            };
+
+            // This should always exist by the time we reach this point, because we should
+            // have inserted any property in the cache, which would have allocated the
+            // proper bind group layout (or the default no-property one).
+            let spawner_bind_group_layout = property_cache
+                .bind_group_layout(property_layout_min_binding_size)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Failed to find spawner@2 bind group layout for property binding size {:?}",
+                        property_layout_min_binding_size,
+                    )
+                });
+            trace!(
+                "Retrieved spawner@2 bind group layout {:?} for property binding size {:?}.",
+                spawner_bind_group_layout.id(),
+                property_layout_min_binding_size
+            );
+
+            // Fetch the bind group layouts from the cache
+            trace!("cached_child_info={:?}", cached_child_info);
+            let parent_particle_layout_min_binding_size =
+                if let Some(cached_child) = cached_child_info.as_ref() {
+                    let Ok((_, parent_cached_effect, _, _, _, _, _, _, _)) =
+                        q_cached_effects.get(cached_child.parent)
+                    else {
+                        // At this point we should have discarded invalid effects with a missing parent,
+                        // so if the parent is not found this is a bug.
+                        error!(
+                            "Effect main_entity {:?}: parent render entity {:?} not found.",
+                            main_entity, cached_child.parent
+                        );
+                        continue;
+                    };
+                    Some(
+                        parent_cached_effect
+                            .slice
+                            .particle_layout
+                            .min_binding_size32(),
+                    )
+                } else {
+                    None
+                };
+            let Some(particle_bind_group_layout) = effect_cache.particle_bind_group_layout(
+                effect_slice.particle_layout.min_binding_size32(),
+                parent_particle_layout_min_binding_size,
+            ) else {
+                error!("Failed to find particle sim bind group @1 for min_binding_size={} parent_min_binding_size={:?}", 
+                effect_slice.particle_layout.min_binding_size32(), parent_particle_layout_min_binding_size);
+                continue;
+            };
+            let particle_bind_group_layout = particle_bind_group_layout.clone();
+            trace!(
+                "Retrieved particle@1 bind group layout {:?} for particle binding size {:?} and parent binding size {:?}.",
+                particle_bind_group_layout.id(),
+                effect_slice.particle_layout.min_binding_size32(),
+                parent_particle_layout_min_binding_size,
+            );
+
+            let particle_layout_min_binding_size =
+                effect_slice.particle_layout.min_binding_size32();
+            let spawner_bind_group_layout = spawner_bind_group_layout.clone();
+
+            // Specialize the init pipeline based on the effect.
+            let init_pipeline_id = {
+                let consume_gpu_spawn_events = init_pipeline_key_flags
+                    .contains(ParticleInitPipelineKeyFlags::CONSUME_GPU_SPAWN_EVENTS);
+
+                // Fetch the metadata@3 bind group layout from the cache
+                let metadata_bind_group_layout = effect_cache
+                    .metadata_init_bind_group_layout(consume_gpu_spawn_events)
+                    .unwrap()
+                    .clone();
+
+                // https://github.com/bevyengine/bevy/issues/17132
+                let particle_bind_group_layout_id = particle_bind_group_layout.id();
+                let spawner_bind_group_layout_id = spawner_bind_group_layout.id();
+                let metadata_bind_group_layout_id = metadata_bind_group_layout.id();
+                pipelines.init_pipeline.temp_particle_bind_group_layout =
+                    Some(particle_bind_group_layout.clone());
+                pipelines.init_pipeline.temp_spawner_bind_group_layout =
+                    Some(spawner_bind_group_layout.clone());
+                pipelines.init_pipeline.temp_metadata_bind_group_layout =
+                    Some(metadata_bind_group_layout);
+                let init_pipeline_id: CachedComputePipelineId = specialized_init_pipelines
+                    .specialize(
+                        pipeline_cache,
+                        &pipelines.init_pipeline,
+                        ParticleInitPipelineKey {
+                            shader: extracted_effect.effect_shaders.init.clone(),
+                            particle_layout_min_binding_size,
+                            parent_particle_layout_min_binding_size,
+                            flags: init_pipeline_key_flags,
+                            particle_bind_group_layout_id,
+                            spawner_bind_group_layout_id,
+                            metadata_bind_group_layout_id,
+                        },
+                    );
+                // keep things tidy; this is just a hack, should not persist
+                pipelines.init_pipeline.temp_particle_bind_group_layout = None;
+                pipelines.init_pipeline.temp_spawner_bind_group_layout = None;
+                pipelines.init_pipeline.temp_metadata_bind_group_layout = None;
+                trace!("Init pipeline specialized: id={:?}", init_pipeline_id);
+
+                init_pipeline_id
+            };
+
+            let update_pipeline_id = {
+                let num_event_buffers = cached_parent_info
+                    .map(|p| p.children.len() as u32)
+                    .unwrap_or_default();
+
+                // FIXME: currently don't hava a way to determine when this is needed, because
+                // we know the number of children per parent only after resolving
+                // all parents, but by that point we forgot if this is a newly added
+                // effect or not. So since we need to re-ensure for all effects, not
+                // only new ones, might as well do here...
+                effect_cache.ensure_metadata_update_bind_group_layout(num_event_buffers);
+
+                // Fetch the bind group layouts from the cache
+                let metadata_bind_group_layout = effect_cache
+                    .metadata_update_bind_group_layout(num_event_buffers)
+                    .unwrap()
+                    .clone();
+
+                // https://github.com/bevyengine/bevy/issues/17132
+                let particle_bind_group_layout_id = particle_bind_group_layout.id();
+                let spawner_bind_group_layout_id = spawner_bind_group_layout.id();
+                let metadata_bind_group_layout_id = metadata_bind_group_layout.id();
+                pipelines.update_pipeline.temp_particle_bind_group_layout =
+                    Some(particle_bind_group_layout);
+                pipelines.update_pipeline.temp_spawner_bind_group_layout =
+                    Some(spawner_bind_group_layout);
+                pipelines.update_pipeline.temp_metadata_bind_group_layout =
+                    Some(metadata_bind_group_layout);
+                let update_pipeline_id = specialized_update_pipelines.specialize(
+                    pipeline_cache,
+                    &pipelines.update_pipeline,
+                    ParticleUpdatePipelineKey {
+                        shader: extracted_effect.effect_shaders.update.clone(),
+                        particle_layout: effect_slice.particle_layout.clone(),
+                        parent_particle_layout_min_binding_size,
+                        num_event_buffers,
+                        particle_bind_group_layout_id,
+                        spawner_bind_group_layout_id,
+                        metadata_bind_group_layout_id,
+                    },
+                );
+                // keep things tidy; this is just a hack, should not persist
+                pipelines.update_pipeline.temp_particle_bind_group_layout = None;
+                pipelines.update_pipeline.temp_spawner_bind_group_layout = None;
+                pipelines.update_pipeline.temp_metadata_bind_group_layout = None;
+                trace!("Update pipeline specialized: id={:?}", update_pipeline_id);
+
+                update_pipeline_id
+            };
+
+            let init_and_update_pipeline_ids = InitAndUpdatePipelineIds {
+                init: init_pipeline_id,
+                update: update_pipeline_id,
+            };
+
+            // For ribbons, which need particle sorting, create a bind group layout for
+            // sorting the effect, based on its particle layout.
+            if extracted_effect.layout_flags.contains(LayoutFlags::RIBBONS) {
+                if let Err(err) = sort_bind_groups.ensure_sort_fill_bind_group_layout(
+                    pipeline_cache,
+                    &extracted_effect.particle_layout,
+                ) {
+                    error!(
+                        "Failed to create bind group for ribbon effect sorting: {:?}",
+                        err
+                    );
+                    continue;
+                }
+            }
+
+            // Create the metadata bind group layout for the render phase.
+            effect_cache.ensure_metadata_render_bind_group_layout();
+
+            // Output some debug info
+            trace!("init_shader = {:?}", extracted_effect.effect_shaders.init);
+            trace!(
+                "update_shader = {:?}",
+                extracted_effect.effect_shaders.update
+            );
+            trace!(
+                "render_shader = {:?}",
+                extracted_effect.effect_shaders.render
+            );
+            trace!("layout_flags = {:?}", extracted_effect.layout_flags);
+            trace!("particle_layout = {:?}", effect_slice.particle_layout);
+
+            trace!(
+                "Updating cached effect at entity {:?}...",
+                extracted_effect.render_entity.id()
+            );
+
+            prepared_effects.effects.insert(
+                *main_entity,
+                InstanceInput {
+                    effect_slice: effect_slice.clone(),
+                    init_and_update_pipeline_ids,
+                    event_buffer_index: cached_effect_events.map(|cee| cee.buffer_index),
+                    child_effects: cached_parent_info
+                        .map(|cp| cp.children.clone())
+                        .unwrap_or_default(),
+                    spawner_index,
+                },
+            );
+        } else {
+            match prepared_effects.effects.get_mut(main_entity) {
+                Some(mut instance_input) => {
+                    instance_input.spawner_index = spawner_index;
+                }
+                None => {
+                    error!(
+                        "Extracted effects should have been marked dirty if an effect \
+                         wasn't prepared!"
+                    );
+                }
+            }
+        }
 
         let mut cmd = commands.entity(extracted_effect.render_entity.id());
         cmd.insert(());
@@ -4014,6 +4037,14 @@ pub(crate) fn prepare_effects(
         let properties_index = match cached_effect_properties {
             Some(cached_effect_properties) => cached_effect_properties.range.start,
             None => !0,
+        };
+
+        // We build this twice so that we don't have to clone the particle
+        // layout in the non-dirty case.
+        let effect_slice = EffectSlice {
+            slice: cached_effect.slice.range(),
+            buffer_index: cached_effect.buffer_index,
+            particle_layout: cached_effect.slice.particle_layout.clone(),
         };
 
         let gpu_effect_metadata = GpuEffectMetadata {
