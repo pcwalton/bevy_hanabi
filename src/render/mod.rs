@@ -2887,6 +2887,7 @@ pub(crate) fn on_remove_cached_effect(
     mut effect_bind_groups: ResMut<EffectBindGroups>,
     mut effects_meta: ResMut<EffectsMeta>,
     mut event_cache: ResMut<EventCache>,
+    mut prepared_effects: ResMut<PreparedEffects>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("on_remove_cached_effect").entered();
@@ -2908,6 +2909,8 @@ pub(crate) fn on_remove_cached_effect(
     else {
         return;
     };
+
+    prepared_effects.effects.remove(main_entity);
 
     // Dealllocate the effect slice in the event buffer, if any.
     if let Some(cached_effect_events) = opt_cached_effect_events {
@@ -3391,20 +3394,6 @@ pub fn update_mesh_locations(
     }
 }
 
-// TEMP - Mark all cached effects as invalid for this frame until another system
-// explicitly marks them as valid. Otherwise we early out in some parts, and
-// reuse by mistake the previous frame's extraction.
-pub fn clear_transient_batch_inputs(
-    mut commands: Commands,
-    mut q_cached_effects: Query<Entity, With<InstanceInput>>,
-) {
-    for entity in &mut q_cached_effects {
-        if let Ok(mut cmd) = commands.get_entity(entity) {
-            cmd.remove::<InstanceInput>();
-        }
-    }
-}
-
 /// Render world cached mesh infos for a single effect instance.
 #[derive(Debug, Clone, Copy, Component)]
 pub(crate) struct CachedMesh {
@@ -3506,6 +3495,7 @@ pub(crate) fn prepare_effects(
     mut effects_meta: ResMut<EffectsMeta>,
     mut effect_bind_groups: ResMut<EffectBindGroups>,
     mut extracted_effects: ResMut<ExtractedEffects>,
+    mut prepared_effects: ResMut<PreparedEffects>,
     mut property_bind_groups: ResMut<PropertyBindGroups>,
     q_cached_effects: Query<(
         &MainEntity,
@@ -3899,16 +3889,22 @@ pub(crate) fn prepare_effects(
             "Updating cached effect at entity {:?}...",
             extracted_effect.render_entity.id()
         );
+
+        prepared_effects.effects.insert(
+            *main_entity,
+            InstanceInput {
+                effect_slice: effect_slice.clone(),
+                init_and_update_pipeline_ids,
+                event_buffer_index: cached_effect_events.map(|cee| cee.buffer_index),
+                child_effects: cached_parent_info
+                    .map(|cp| cp.children.clone())
+                    .unwrap_or_default(),
+                spawner_index,
+            },
+        );
+
         let mut cmd = commands.entity(extracted_effect.render_entity.id());
-        cmd.insert(InstanceInput {
-            effect_slice: effect_slice.clone(),
-            init_and_update_pipeline_ids,
-            event_buffer_index: cached_effect_events.map(|cee| cee.buffer_index),
-            child_effects: cached_parent_info
-                .map(|cp| cp.children.clone())
-                .unwrap_or_default(),
-            spawner_index,
-        });
+        cmd.insert(());
 
         // Update properties
         if let Some(cached_effect_properties) = cached_effect_properties {
@@ -4146,11 +4142,11 @@ pub(crate) fn batch_effects(
         Option<&CachedChildInfo>,
         Option<&CachedProperties>,
         &mut DispatchBufferIndices,
-        &mut InstanceInput,
     )>,
     sorted_effect_batches: ResMut<SortedEffects>,
     mut event_cache: ResMut<EventCache>,
     extracted_effects: Res<ExtractedEffects>,
+    mut prepared_effects: ResMut<PreparedEffects>,
 ) {
     trace!("batch_effects");
 
@@ -4168,7 +4164,10 @@ pub(crate) fn batch_effects(
 
     let mut effect_sorter = EffectSorter::new();
 
-    for (entity, _, _, _, _, cached_child_info, _, _, input) in &q_cached_effects {
+    for (entity, main_entity, _, _, _, cached_child_info, _, _) in &q_cached_effects {
+        let Some(input) = prepared_effects.effects.get(main_entity) else {
+            continue;
+        };
         effect_sorter.effects.push(EffectToBeSorted {
             entity,
             buffer_index: input.effect_slice.buffer_index,
@@ -4206,11 +4205,15 @@ pub(crate) fn batch_effects(
             cached_child_info,
             cached_properties,
             dispatch_buffer_indices,
-            mut input,
         )) = q_cached_effects.get_mut(entity)
         else {
             continue;
         };
+
+        let Some(input) = prepared_effects.effects.get_mut(main_entity) else {
+            continue;
+        };
+
         // Detect if this cached effect was not updated this frame by a new extracted
         // effect. This happens when e.g. the effect is invisible and not simulated, or
         // some error prevented it from being extracted. We use the pipeline IDs vector
@@ -4241,7 +4244,7 @@ pub(crate) fn batch_effects(
             cached_effect_events,
             cached_child_info,
             cached_mesh_location,
-            &mut input,
+            input,
             extracted_effect,
             *dispatch_buffer_indices.as_ref(),
             cached_properties.map(|cp| PropertyBindGroupKey {
@@ -8098,6 +8101,11 @@ impl From<LayoutFlags> for ParticleRenderAlphaMaskPipelineKey {
             ParticleRenderAlphaMaskPipelineKey::Blend
         }
     }
+}
+
+#[derive(Default, Resource, Debug)]
+pub(crate) struct PreparedEffects {
+    effects: MainEntityHashMap<InstanceInput>,
 }
 
 #[cfg(test)]

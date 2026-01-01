@@ -401,7 +401,7 @@ impl EffectInstance {
 }
 
 /// Effect batching input, obtained from extracted effects.
-#[derive(Debug, Component)]
+#[derive(Debug)]
 pub(crate) struct InstanceInput {
     /// Effect slices.
     pub effect_slice: EffectSlice,

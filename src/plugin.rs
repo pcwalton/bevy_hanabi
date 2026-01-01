@@ -27,18 +27,17 @@ use crate::{
     compile_effects,
     properties::EffectProperties,
     render::{
-        add_effects, batch_effects, clear_transient_batch_inputs, debug_dump_buffers,
-        extract_effect_events, extract_effects, fixup_parents, on_remove_cached_effect,
-        on_remove_cached_properties, prepare_bind_groups, prepare_effects, prepare_gpu_resources,
-        prepare_late_gpu_resources, prepare_property_buffers, queue_effects, resolve_parents,
-        update_mesh_locations, DebugSettings, DispatchIndirectPipeline, DrawEffects,
-        EffectAssetEvents, EffectBindGroups, EffectCache, EffectsMeta, EventCache,
-        ExtractedEffects, GpuBufferOperations, GpuEffectMetadata, GpuEffectSortMetadata,
-        GpuRenderBatchDescriptor, GpuSpawnerParams, IndirectBatchPipeline,
-        InitIndirectBatchPipeline, ParticlesInitPipeline, ParticlesRenderPipeline,
-        ParticlesUpdatePipeline, PropertyBindGroups, PropertyCache, RenderBatchPipeline,
-        RenderDebugSettings, ShaderCache, SimParams, SortBindGroups, SortedEffects,
-        StorageType as _, VfxSimulateDriverNode, VfxSimulateNode,
+        add_effects, batch_effects, debug_dump_buffers, extract_effect_events, extract_effects,
+        fixup_parents, on_remove_cached_effect, on_remove_cached_properties, prepare_bind_groups,
+        prepare_effects, prepare_gpu_resources, prepare_late_gpu_resources,
+        prepare_property_buffers, queue_effects, resolve_parents, update_mesh_locations,
+        DebugSettings, DispatchIndirectPipeline, DrawEffects, EffectAssetEvents, EffectBindGroups,
+        EffectCache, EffectsMeta, EventCache, ExtractedEffects, GpuBufferOperations,
+        GpuEffectMetadata, GpuEffectSortMetadata, GpuRenderBatchDescriptor, GpuSpawnerParams,
+        IndirectBatchPipeline, InitIndirectBatchPipeline, ParticlesInitPipeline,
+        ParticlesRenderPipeline, ParticlesUpdatePipeline, PreparedEffects, PropertyBindGroups,
+        PropertyCache, RenderBatchPipeline, RenderDebugSettings, ShaderCache, SimParams,
+        SortBindGroups, SortedEffects, StorageType as _, VfxSimulateDriverNode, VfxSimulateNode,
     },
     spawn::{self, Random},
     tick_spawners,
@@ -496,6 +495,7 @@ impl Plugin for HanabiPlugin {
             .init_resource::<EffectAssetEvents>()
             .init_resource::<SimParams>()
             .init_resource::<SortedEffects>()
+            .init_resource::<PreparedEffects>()
             .configure_sets(
                 Render,
                 (
@@ -513,7 +513,6 @@ impl Plugin for HanabiPlugin {
                 Render,
                 (
                     (
-                        clear_transient_batch_inputs,
                         add_effects,
                         resolve_parents,
                         fixup_parents,
