@@ -3901,24 +3901,13 @@ pub(crate) fn prepare_effects(
         );
         let mut cmd = commands.entity(extracted_effect.render_entity.id());
         cmd.insert(InstanceInput {
-            handle: extracted_effect.handle.clone(),
-            entity: extracted_effect.render_entity.id(),
-            main_entity: extracted_effect.main_entity,
             effect_slice: effect_slice.clone(),
             init_and_update_pipeline_ids,
             event_buffer_index: cached_effect_events.map(|cee| cee.buffer_index),
             child_effects: cached_parent_info
                 .map(|cp| cp.children.clone())
                 .unwrap_or_default(),
-            layout_flags: extracted_effect.layout_flags,
-            texture_layout: extracted_effect.texture_layout.clone(),
-            textures: extracted_effect.textures.clone(),
-            alpha_mode: extracted_effect.alpha_mode,
-            particle_layout: extracted_effect.particle_layout.clone(),
-            shaders: extracted_effect.effect_shaders.clone(),
             spawner_index,
-            spawn_count: extracted_effect.spawn_count,
-            position: extracted_effect.transform.translation(),
         });
 
         // Update properties
@@ -4161,6 +4150,7 @@ pub(crate) fn batch_effects(
     )>,
     sorted_effect_batches: ResMut<SortedEffects>,
     mut event_cache: ResMut<EventCache>,
+    extracted_effects: Res<ExtractedEffects>,
 ) {
     trace!("batch_effects");
 
@@ -4235,6 +4225,14 @@ pub(crate) fn batch_effects(
         //     continue;
         // }
 
+        let Some(extracted_effect) = extracted_effects.effects.get(main_entity) else {
+            error!(
+                "Effect {:?} should have been extracted before being batched",
+                main_entity
+            );
+            continue;
+        };
+
         // Create one `EffectInstance` per instance. This contains most of the
         // data needed to drive rendering. However this doesn't drive
         // rendering; this is just storage.
@@ -4244,6 +4242,7 @@ pub(crate) fn batch_effects(
             cached_child_info,
             cached_mesh_location,
             &mut input,
+            extracted_effect,
             *dispatch_buffer_indices.as_ref(),
             cached_properties.map(|cp| PropertyBindGroupKey {
                 buffer_index: cp.buffer_index,
@@ -4256,7 +4255,7 @@ pub(crate) fn batch_effects(
         // for ribbon meshing, in order to avoid gaps when some particles in the middle
         // of the ribbon die (since we can't guarantee a linear lifetime through the
         // ribbon).
-        if input.layout_flags.contains(LayoutFlags::RIBBONS) {
+        if extracted_effect.layout_flags.contains(LayoutFlags::RIBBONS) {
             // This buffer is allocated in prepare_effects(), so should always be available
             if effects_meta.effect_metadata_buffer.buffer().is_none() {
                 error!("Failed to find effect metadata buffer. This is a bug.");

@@ -24,26 +24,21 @@ use wgpu::{BufferDescriptor, BufferUsages, CommandEncoderDescriptor, MapMode};
 
 use crate::{
     render::{
-        batch::InstanceInput,
         effect_cache::{CachedEffect, DispatchBufferIndices},
-        EffectCache, EffectsMeta, GpuEffectMetadata, RenderDebugSettings,
+        EffectCache, EffectsMeta, ExtractedEffects, GpuEffectMetadata, RenderDebugSettings,
     },
     ParticleLayout, ScalarType, ValueType,
 };
 
 // This needs to be run right after `render_system`.
 pub(crate) fn debug_dump_buffers(
-    q_cached_effects: Query<(
-        &MainEntity,
-        &CachedEffect,
-        &DispatchBufferIndices,
-        &InstanceInput,
-    )>,
+    q_cached_effects: Query<(&MainEntity, &CachedEffect, &DispatchBufferIndices)>,
     render_device: ResMut<RenderDevice>,
     render_queue: ResMut<RenderQueue>,
     debug_settings: Res<RenderDebugSettings>,
     effects_meta: Res<EffectsMeta>,
     effect_cache: Res<EffectCache>,
+    extracted_effects: Res<ExtractedEffects>,
     time: Res<Time>,
 ) {
     // TODO: Use this!
@@ -76,17 +71,20 @@ pub(crate) fn debug_dump_buffers(
     let mut needed_effect_buffers: HashMap<u32, Vec<MainEntity>> = HashMap::new();
     let mut needed_readback_effect_info: MainEntityHashMap<ReadbackEffectInfo> =
         MainEntityHashMap::default();
-    for (effect_entity, cached_effect, dispatch_buffer_indices, instance_input) in &q_cached_effects
-    {
+    for (effect_entity, cached_effect, dispatch_buffer_indices) in &q_cached_effects {
+        let Some(extracted_effect) = extracted_effects.effects.get(effect_entity) else {
+            continue;
+        };
+
         needed_readback_effect_info.insert(
             *effect_entity,
             ReadbackEffectInfo {
-                name: match instance_input.handle.id() {
+                name: match extracted_effect.handle.id() {
                     AssetId::Index { index, marker: _ } => format!("{:x}", index.to_bits()),
                     AssetId::Uuid { uuid } => uuid.to_string(),
                 },
                 dispatch_buffer_indices: *dispatch_buffer_indices,
-                particle_layout: instance_input.particle_layout.clone(),
+                particle_layout: extracted_effect.particle_layout.clone(),
                 effect_buffer_index: cached_effect.buffer_index,
             },
         );

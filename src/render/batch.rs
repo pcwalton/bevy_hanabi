@@ -15,7 +15,8 @@ use super::{
     BufferBindingSource, CachedMesh, LayoutFlags, PropertyBindGroupKey,
 };
 use crate::{
-    render::CachedMeshLocation, AlphaMode, EffectAsset, EffectShader, ParticleLayout, TextureLayout,
+    render::{CachedMeshLocation, ExtractedEffect},
+    AlphaMode, EffectAsset, ParticleLayout, TextureLayout,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -356,6 +357,7 @@ impl EffectInstance {
         cached_child_info: Option<&CachedChildInfo>,
         cached_mesh_location: Option<&CachedMeshLocation>,
         input: &mut InstanceInput,
+        extracted_effect: &ExtractedEffect,
         dispatch_buffer_indices: DispatchBufferIndices,
         property_key: Option<PropertyBindGroupKey>,
         main_entity: MainEntity,
@@ -364,17 +366,17 @@ impl EffectInstance {
             BatchSpawnInfo::GpuSpawner { event_buffer_index }
         } else {
             BatchSpawnInfo::CpuSpawner {
-                total_spawn_count: input.spawn_count,
+                total_spawn_count: extracted_effect.spawn_count,
             }
         };
 
         EffectInstance {
-            handle: input.handle.clone(),
+            handle: extracted_effect.handle.clone(),
             buffer_index: input.effect_slice.buffer_index,
             slice: input.effect_slice.slice.clone(),
             spawn_info,
             init_and_update_pipeline_ids: input.init_and_update_pipeline_ids,
-            render_shader: input.shaders.render.clone(),
+            render_shader: extracted_effect.effect_shaders.render.clone(),
             parent_min_binding_size: cached_child_info
                 .map(|cci| cci.parent_particle_layout.min_binding_size32()),
             parent_binding_source: cached_child_info
@@ -384,15 +386,15 @@ impl EffectInstance {
             spawner_base: input.spawner_index,
             particle_layout: input.effect_slice.particle_layout.clone(),
             dispatch_buffer_indices,
-            layout_flags: input.layout_flags,
+            layout_flags: extracted_effect.layout_flags,
             mesh: cached_mesh.mesh,
-            texture_layout: input.texture_layout.clone(),
-            textures: input.textures.clone(),
-            alpha_mode: input.alpha_mode,
-            entities: vec![input.main_entity.id().index()],
+            texture_layout: extracted_effect.texture_layout.clone(),
+            textures: extracted_effect.textures.clone(),
+            alpha_mode: extracted_effect.alpha_mode,
+            entities: vec![main_entity.id().index()],
             cached_effect_events: cached_effect_events.cloned(),
             cached_mesh_location: cached_mesh_location.cloned(),
-            position: input.position,
+            position: extracted_effect.transform.translation(),
             main_entity,
         }
     }
@@ -401,13 +403,6 @@ impl EffectInstance {
 /// Effect batching input, obtained from extracted effects.
 #[derive(Debug, Component)]
 pub(crate) struct InstanceInput {
-    /// Handle of the underlying effect asset describing the effect.
-    pub handle: Handle<EffectAsset>,
-    /// Main entity of the [`ParticleEffect`], used for visibility.
-    pub main_entity: MainEntity,
-    /// Render entity of the [`CachedEffect`].
-    #[allow(dead_code)]
-    pub entity: Entity,
     /// Effect slices.
     pub effect_slice: EffectSlice,
     /// Compute pipeline IDs of the specialized and cached pipelines.
@@ -416,25 +411,9 @@ pub(crate) struct InstanceInput {
     pub event_buffer_index: Option<u32>,
     /// Child effects, if any.
     pub child_effects: Vec<ChildEventBuffer>,
-    /// Various flags related to the effect.
-    pub layout_flags: LayoutFlags,
-    /// Texture layout.
-    pub texture_layout: TextureLayout,
-    /// Textures.
-    pub textures: Vec<Handle<Image>>,
-    /// Alpha mode.
-    pub alpha_mode: AlphaMode,
-    #[allow(dead_code)]
-    pub particle_layout: ParticleLayout,
-    /// Effect shaders.
-    pub shaders: EffectShader,
     /// Index of the [`GpuSpawnerParams`] in the
     /// [`EffectsCache::spawner_buffer`].
     pub spawner_index: u32,
-    /// Number of particles to spawn for this effect.
-    pub spawn_count: u32,
-    /// Emitter position.
-    pub position: Vec3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
