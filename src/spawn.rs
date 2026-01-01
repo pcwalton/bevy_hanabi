@@ -610,21 +610,6 @@ pub struct EffectSpawner {
     /// Sampled value of the number of particles to spawn per `spawn_duration`.
     sampled_count: f32,
 
-    /// Number of particles to spawn this frame.
-    ///
-    /// This value is normally updated by calling [`tick()`], which
-    /// automatically happens once per frame when the [`tick_spawners()`]
-    /// system runs in the [`PostUpdate`] schedule.
-    ///
-    /// You can manually assign this value to override the one calculated by
-    /// [`tick()`]. Note in this case that you need to override the value after
-    /// the automated one was calculated, by ordering your system
-    /// after [`tick_spawners()`] or [`EffectSystems::TickSpawners`].
-    ///
-    /// [`tick()`]: crate::EffectSpawner::tick
-    /// [`EffectSystems::TickSpawners`]: crate::EffectSystems::TickSpawners
-    pub spawn_count: u32,
-
     /// Fractional remainder of particle count to spawn.
     ///
     /// This is accumulated each tick, and the integral part is added to
@@ -636,6 +621,23 @@ pub struct EffectSpawner {
     /// doesn't tick (no particle spawned, no internal state updated).
     pub active: bool,
 }
+
+/// Number of particles to spawn this frame.
+///
+/// This value is normally updated by calling [`tick()`], which
+/// automatically happens once per frame when the [`tick_spawners()`]
+/// system runs in the [`PostUpdate`] schedule.
+///
+/// You can manually assign this value to override the one calculated by
+/// [`tick()`]. Note in this case that you need to override the value after
+/// the automated one was calculated, by ordering your system
+/// after [`tick_spawners()`] or [`EffectSystems::TickSpawners`].
+///
+/// [`tick()`]: crate::EffectSpawner::tick
+/// [`EffectSystems::TickSpawners`]: crate::EffectSystems::TickSpawners
+#[derive(Debug, Default, Clone, Copy, PartialEq, Component, Deref, DerefMut, Reflect)]
+#[reflect(Component)]
+pub struct SpawnCount(pub u32);
 
 impl EffectSpawner {
     /// Create a new spawner.
@@ -654,7 +656,6 @@ impl EffectSpawner {
             sampled_spawn_duration: 0.,
             sampled_period: 0.,
             sampled_count: 0.,
-            spawn_count: 0,
             spawn_remainder: 0.,
             active: settings.starts_active(),
         }
@@ -761,7 +762,6 @@ impl EffectSpawner {
         self.sampled_spawn_duration = 0.;
         self.sampled_period = 0.;
         self.sampled_count = 0.;
-        self.spawn_count = 0;
         self.spawn_remainder = 0.;
     }
 
@@ -779,15 +779,14 @@ impl EffectSpawner {
     ///
     /// The integral number of particles to spawn this frame. Any fractional
     /// remainder is saved for the next call.
-    pub fn tick(&mut self, mut dt: f32, rng: &mut Pcg32) -> u32 {
+    pub fn tick(&mut self, mut dt: f32, rng: &mut Pcg32) -> SpawnCount {
         // If inactive, or if the finite number of cycles has been completed, then we're
         // done.
         if !self.active
             || (!self.settings.is_forever()
                 && (self.completed_cycle_count >= self.settings.cycle_count()))
         {
-            self.spawn_count = 0;
-            return 0;
+            return SpawnCount(0);
         }
 
         // Use a loop in case the timestep dt spans multiple cycles
@@ -858,9 +857,8 @@ impl EffectSpawner {
         // next one
         count += (self.spawn_remainder.floor() as i32 - self.cycle_spawn as i32).max(0) as u32;
         self.cycle_spawn += count;
-        self.spawn_count = count;
 
-        self.spawn_count
+        SpawnCount(count)
     }
 }
 
@@ -896,13 +894,15 @@ pub fn tick_spawners(
         &ParticleEffect,
         &InheritedVisibility,
         Option<&mut EffectSpawner>,
+        Option<&mut SpawnCount>,
     )>,
 ) {
     trace!("tick_spawners()");
 
     let dt = time.delta_secs();
 
-    for (entity, effect, inherited_visibility, maybe_spawner) in query.iter_mut() {
+    for (entity, effect, inherited_visibility, maybe_spawner, maybe_spawn_count) in query.iter_mut()
+    {
         let Some(asset) = effects.get(&effect.handle) else {
             trace!(
                 "Effect asset with handle {:?} is not available; skipped initializers tick.",
@@ -922,16 +922,27 @@ pub fn tick_spawners(
         }
 
         if let Some(mut effect_spawner) = maybe_spawner {
-            effect_spawner.tick(dt, &mut rng.0);
+            let new_spawn_count = effect_spawner.tick(dt, &mut rng.0);
+            if let Some(mut spawn_count) = maybe_spawn_count {
+                // This if is important for change detection!
+                if *spawn_count != new_spawn_count {
+                    *spawn_count = new_spawn_count;
+                }
+                continue;
+            }
+            commands.entity(entity).insert(new_spawn_count);
             continue;
         }
 
-        let effect_spawner = {
+        let (effect_spawner, spawn_count) = {
             let mut effect_spawner = EffectSpawner::new(&asset.spawner);
-            effect_spawner.tick(dt, &mut rng.0);
-            effect_spawner
+            let spawn_count = effect_spawner.tick(dt, &mut rng.0);
+            (effect_spawner, spawn_count)
         };
-        commands.entity(entity).insert(effect_spawner);
+        commands
+            .entity(entity)
+            .insert(effect_spawner)
+            .insert(spawn_count);
     }
 }
 
@@ -979,7 +990,7 @@ mod test {
         // cycles.
         let spawner = SpawnerSettings::new(3.0.into(), 3.0.into(), 10.0.into(), 2);
         let mut spawner = EffectSpawner::new(&spawner);
-        let count = spawner.tick(2., rng); // t = 2s
+        let count = *spawner.tick(2., rng); // t = 2s
         assert_eq!(count, 2);
         assert!(spawner.active);
         assert_eq!(spawner.cycle_time(), 2.);
@@ -988,7 +999,7 @@ mod test {
         assert_eq!(spawner.cycle_ratio(), 0.2); // 2s / 10s
         assert_eq!(spawner.cycle_spawn_count(), 3.);
         assert_eq!(spawner.completed_cycle_count(), 0);
-        let count = spawner.tick(5., rng); // t = 7s
+        let count = *spawner.tick(5., rng); // t = 7s
         assert_eq!(count, 1);
         assert!(spawner.active);
         assert_eq!(spawner.cycle_time(), 7.);
@@ -997,7 +1008,7 @@ mod test {
         assert_eq!(spawner.cycle_ratio(), 0.7); // 7s / 10s
         assert_eq!(spawner.cycle_spawn_count(), 3.);
         assert_eq!(spawner.completed_cycle_count(), 0);
-        let count = spawner.tick(8., rng); // t = 15s
+        let count = *spawner.tick(8., rng); // t = 15s
         assert_eq!(count, 3);
         assert!(spawner.active);
         assert_eq!(spawner.cycle_time(), 5.); // 15. mod 10.
@@ -1006,11 +1017,11 @@ mod test {
         assert_eq!(spawner.cycle_ratio(), 0.5); // 5s / 10s
         assert_eq!(spawner.cycle_spawn_count(), 3.);
         assert_eq!(spawner.completed_cycle_count(), 1);
-        let count = spawner.tick(10., rng); // t = 25s
+        let count = *spawner.tick(10., rng); // t = 25s
         assert_eq!(count, 0);
         assert!(spawner.active);
         assert_eq!(spawner.completed_cycle_count(), 2);
-        let count = spawner.tick(0.1, rng); // t = 25.1s
+        let count = *spawner.tick(0.1, rng); // t = 25.1s
         assert_eq!(count, 0);
         assert!(spawner.active);
         assert_eq!(spawner.completed_cycle_count(), 2);
@@ -1035,9 +1046,9 @@ mod test {
         assert!(spawner.is_once());
         let mut spawner = EffectSpawner::new(&spawner);
         assert!(spawner.active);
-        let count = spawner.tick(0.001, rng);
+        let count = *spawner.tick(0.001, rng);
         assert_eq!(count, 5);
-        let count = spawner.tick(100.0, rng);
+        let count = *spawner.tick(100.0, rng);
         assert_eq!(count, 0);
     }
 
@@ -1050,7 +1061,7 @@ mod test {
         let mut spawner = EffectSpawner::new(&spawner);
         spawner.tick(1.0, rng);
         spawner.reset();
-        let count = spawner.tick(1.0, rng);
+        let count = *spawner.tick(1.0, rng);
         assert_eq!(count, 5);
     }
 
@@ -1065,20 +1076,20 @@ mod test {
         assert!(!spawner.has_completed());
 
         // Inactive; no-op
-        let count = spawner.tick(1.0, rng);
+        let count = *spawner.tick(1.0, rng);
         assert_eq!(count, 0);
         assert!(!spawner.has_completed());
 
         spawner.active = true;
 
         // Active; spawns
-        let count = spawner.tick(1.0, rng);
+        let count = *spawner.tick(1.0, rng);
         assert_eq!(count, 5);
         assert!(spawner.active);
         assert!(spawner.has_completed()); // once(), so completes on first tick()
 
         // Completed; no-op
-        let count = spawner.tick(1.0, rng);
+        let count = *spawner.tick(1.0, rng);
         assert_eq!(count, 0);
         assert!(spawner.active);
         assert!(spawner.has_completed());
@@ -1088,7 +1099,7 @@ mod test {
         assert!(spawner.active);
         assert!(!spawner.has_completed());
 
-        let count = spawner.tick(1.0, rng);
+        let count = *spawner.tick(1.0, rng);
         assert_eq!(count, 5);
         assert!(spawner.active);
         assert!(spawner.has_completed());
@@ -1102,9 +1113,9 @@ mod test {
         assert!(spawner.is_forever());
         let mut spawner = EffectSpawner::new(&spawner);
         // Slightly over 1.0 to avoid edge case
-        let count = spawner.tick(1.01, rng);
+        let count = *spawner.tick(1.01, rng);
         assert_eq!(count, 5);
-        let count = spawner.tick(0.4, rng);
+        let count = *spawner.tick(0.4, rng);
         assert_eq!(count, 2);
     }
 
@@ -1117,11 +1128,11 @@ mod test {
         spawner.tick(1.01, rng);
         spawner.active = false;
         assert!(!spawner.active);
-        let count = spawner.tick(0.4, rng);
+        let count = *spawner.tick(0.4, rng);
         assert_eq!(count, 0);
         spawner.active = true;
         assert!(spawner.active);
-        let count = spawner.tick(0.4, rng);
+        let count = *spawner.tick(0.4, rng);
         assert_eq!(count, 2);
     }
 
@@ -1132,7 +1143,7 @@ mod test {
         assert!(!spawner.is_once());
         let mut spawner = EffectSpawner::new(&spawner);
         // 13 ticks instead of 12 to avoid edge case
-        let count = (0..13).map(|_| spawner.tick(1.0 / 60.0, rng)).sum::<u32>();
+        let count = (0..13).map(|_| *spawner.tick(1.0 / 60.0, rng)).sum::<u32>();
         assert_eq!(count, 1);
     }
 
@@ -1143,11 +1154,11 @@ mod test {
         assert!(!spawner.is_once());
         assert!(spawner.is_forever());
         let mut spawner = EffectSpawner::new(&spawner);
-        let count = spawner.tick(1.0, rng);
+        let count = *spawner.tick(1.0, rng);
         assert_eq!(count, 5);
-        let count = spawner.tick(4.0, rng);
+        let count = *spawner.tick(4.0, rng);
         assert_eq!(count, 10);
-        let count = spawner.tick(0.1, rng);
+        let count = *spawner.tick(0.1, rng);
         assert_eq!(count, 0);
     }
 
@@ -1157,14 +1168,14 @@ mod test {
         let spawner = SpawnerSettings::rate(5.0.into()).with_starts_active(false);
         let mut spawner = EffectSpawner::new(&spawner);
         assert!(!spawner.active);
-        let count = spawner.tick(1., rng);
+        let count = *spawner.tick(1., rng);
         assert_eq!(count, 0);
         spawner.active = false; // no-op
-        let count = spawner.tick(1., rng);
+        let count = *spawner.tick(1., rng);
         assert_eq!(count, 0);
         spawner.active = true;
         assert!(spawner.active);
-        let count = spawner.tick(1., rng);
+        let count = *spawner.tick(1., rng);
         assert_eq!(count, 5);
     }
 
@@ -1297,18 +1308,25 @@ mod test {
             if let Some(test_visibility) = test_case.visibility {
                 // Simulated-when-visible effect (SimulationCondition::WhenVisible)
 
-                let (entity, visibility, inherited_visibility, particle_effect, effect_spawner) =
-                    world
-                        .query::<(
-                            Entity,
-                            &Visibility,
-                            &InheritedVisibility,
-                            &ParticleEffect,
-                            Option<&EffectSpawner>,
-                        )>()
-                        .iter(world)
-                        .next()
-                        .unwrap();
+                let (
+                    entity,
+                    visibility,
+                    inherited_visibility,
+                    particle_effect,
+                    effect_spawner,
+                    spawn_count,
+                ) = world
+                    .query::<(
+                        Entity,
+                        &Visibility,
+                        &InheritedVisibility,
+                        &ParticleEffect,
+                        Option<&EffectSpawner>,
+                        Option<&SpawnCount>,
+                    )>()
+                    .iter(world)
+                    .next()
+                    .unwrap();
                 assert_eq!(entity, effect_entity);
                 assert_eq!(visibility, test_visibility);
                 assert_eq!(
@@ -1327,7 +1345,10 @@ mod test {
                     assert_eq!(effect_spawner.spawn_remainder, 0.);
                     assert_eq!(effect_spawner.cycle_time, 0.);
                     assert_eq!(effect_spawner.completed_cycle_count, 1);
-                    assert_eq!(effect_spawner.spawn_count, 32);
+
+                    assert!(spawn_count.is_some());
+                    let spawn_count = spawn_count.unwrap();
+                    assert_eq!(**spawn_count, 32);
 
                     assert_eq!(actual_spawner, test_case.asset_spawner);
                 } else {
@@ -1338,8 +1359,13 @@ mod test {
             } else {
                 // Always-simulated effect (SimulationCondition::Always)
 
-                let (entity, particle_effect, effect_spawners) = world
-                    .query::<(Entity, &ParticleEffect, Option<&EffectSpawner>)>()
+                let (entity, particle_effect, effect_spawners, spawn_counts) = world
+                    .query::<(
+                        Entity,
+                        &ParticleEffect,
+                        Option<&EffectSpawner>,
+                        Option<&SpawnCount>,
+                    )>()
                     .iter(world)
                     .next()
                     .unwrap();
@@ -1355,7 +1381,10 @@ mod test {
                 assert_eq!(effect_spawner.spawn_remainder, 0.);
                 assert_eq!(effect_spawner.cycle_time, 0.);
                 assert_eq!(effect_spawner.completed_cycle_count, 1);
-                assert_eq!(effect_spawner.spawn_count, 32);
+
+                assert!(spawn_counts.is_some());
+                let spawn_count = spawn_counts.unwrap();
+                assert_eq!(**spawn_count, 32);
 
                 assert_eq!(actual_spawner, test_case.asset_spawner);
             }

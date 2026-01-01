@@ -185,11 +185,11 @@ use std::fmt::Write as _;
 use bevy::{
     asset::AsAssetId,
     camera::visibility::VisibilityClass,
-    platform::collections::{HashMap, HashSet},
+    ecs::entity::EntityHashMap,
+    platform::collections::HashSet,
     prelude::*,
     render::{extract_component::ExtractComponent, sync_world::SyncToRenderWorld},
 };
-use rand::{Rng, SeedableRng as _};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -218,7 +218,7 @@ pub use modifier::*;
 pub use plugin::{EffectSystems, HanabiPlugin};
 pub use properties::*;
 pub use render::{DebugSettings, LayoutFlags, ShaderCache};
-pub use spawn::{tick_spawners, CpuValue, EffectSpawner, Random, SpawnerSettings};
+pub use spawn::{tick_spawners, CpuValue, EffectSpawner, Random, SpawnCount, SpawnerSettings};
 pub use time::{EffectSimulation, EffectSimulationTime};
 
 #[allow(missing_docs)]
@@ -1668,7 +1668,7 @@ fn compile_effects(
     // pass because we can't borrow mutably while doing a double lookup on the
     // query. This map is used to lookup valid parents, and filter out effects with
     // a declared parent but unresolved parent asset.
-    let particle_layouts_and_parents: HashMap<Entity, (ParticleLayout, Option<Entity>)> = q_effects
+    let particle_layouts_and_parents: EntityHashMap<(ParticleLayout, Option<Entity>)> = q_effects
         .iter()
         .filter_map(|(entity, effect, _, parent, _)| {
             effects
@@ -1678,8 +1678,8 @@ fn compile_effects(
         .collect();
 
     // Count children
-    let mut children: HashMap<Entity, Vec<Entity>> =
-        HashMap::with_capacity_and_hasher(particle_layouts_and_parents.len(), Default::default());
+    let mut children: EntityHashMap<Vec<Entity>> =
+        EntityHashMap::with_capacity(particle_layouts_and_parents.len());
     for (child, (_, parent)) in particle_layouts_and_parents.iter() {
         if let Some(parent) = parent.as_ref() {
             children.entry(*parent).or_default().push(*child);
@@ -1747,14 +1747,6 @@ fn compile_effects(
                 &mut shaders,
                 &mut shader_cache,
             );
-        } else {
-            // Update the PRNG seed. Unfortunately at the minute the "seed" (which
-            // really is the internal PRNG state rather) is not cached on GPU, and
-            // is re-uploaded each frame, so if it's not changed every frame then
-            // there's no randomness anymore, because the uses of the previous frame
-            // are "forgotten".
-            let mut rng = rand::rngs::StdRng::seed_from_u64(compiled_effect.prng_seed as u64);
-            compiled_effect.prng_seed = rng.gen();
         }
     }
 

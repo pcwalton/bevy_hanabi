@@ -49,7 +49,7 @@ use bevy::{
         },
         render_resource::*,
         renderer::{RenderContext, RenderDevice, RenderQueue},
-        sync_world::{MainEntity, RenderEntity, TemporaryRenderEntity},
+        sync_world::{MainEntity, MainEntityHashMap, RenderEntity, TemporaryRenderEntity},
         texture::GpuImage,
         view::{
             ExtractedView, RenderVisibleEntities, ViewTarget, ViewUniform, ViewUniformOffset,
@@ -64,6 +64,7 @@ use effect_cache::{BufferState, CachedEffect, EffectSlice};
 use event::{CachedChildInfo, CachedEffectEvents, CachedParentInfo, CachedParentRef, GpuChildInfo};
 use fixedbitset::FixedBitSet;
 use gpu_buffer::GpuBuffer;
+use rand::{rngs::StdRng, Rng as _, SeedableRng as _};
 
 use crate::{
     asset::{DefaultMesh, EffectAsset},
@@ -77,7 +78,7 @@ use crate::{
         event::GpuBatchEffectIndices,
     },
     AlphaMode, Attribute, CompiledParticleEffect, EffectProperties, EffectShader, EffectSimulation,
-    EffectSpawner, EffectVisibilityClass, ParticleLayout, PropertyLayout, SimulationCondition,
+    EffectVisibilityClass, ParticleLayout, PropertyLayout, SimulationCondition, SpawnCount,
     TextureLayout,
 };
 
@@ -2051,8 +2052,8 @@ pub struct AddedEffect {
 /// render world as a render resource.
 #[derive(Default, Resource)]
 pub(crate) struct ExtractedEffects {
-    /// Extracted effects this frame.
-    pub effects: Vec<ExtractedEffect>,
+    /// Extracted effects.
+    pub effects: MainEntityHashMap<ExtractedEffect>,
     /// Newly added effects without a GPU allocation yet.
     pub added_effects: Vec<AddedEffect>,
 }
@@ -2177,16 +2178,26 @@ pub(crate) fn extract_effects(
         >,
     >,
     q_effects: Extract<
-        Query<(
-            Entity,
-            &RenderEntity,
-            Option<&InheritedVisibility>,
-            Option<&ViewVisibility>,
-            &EffectSpawner,
-            &CompiledParticleEffect,
-            Option<Ref<EffectProperties>>,
-            &GlobalTransform,
-        )>,
+        Query<
+            (
+                Entity,
+                &RenderEntity,
+                Option<&InheritedVisibility>,
+                Option<&ViewVisibility>,
+                Ref<SpawnCount>,
+                Ref<CompiledParticleEffect>,
+                Option<Ref<EffectProperties>>,
+                &GlobalTransform,
+            ),
+            Or<(
+                Changed<InheritedVisibility>,
+                Changed<ViewVisibility>,
+                Changed<SpawnCount>,
+                Changed<CompiledParticleEffect>,
+                Changed<EffectProperties>,
+                Changed<GlobalTransform>,
+            )>,
+        >,
     >,
     q_all_effects: Extract<Query<(&RenderEntity, &CompiledParticleEffect), With<GlobalTransform>>>,
     mut pending_effects: Local<Vec<MainEntity>>,
@@ -2196,6 +2207,7 @@ pub(crate) fn extract_effects(
     mut sim_params: ResMut<SimParams>,
     mut extracted_effects: ResMut<ExtractedEffects>,
     mut render_debug_settings: ResMut<RenderDebugSettings>,
+    mut removed_effects: Extract<RemovedComponents<CompiledParticleEffect>>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("extract_effects").entered();
@@ -2318,18 +2330,21 @@ pub(crate) fn extract_effects(
         .collect();
 
     // Loop over all existing effects to extract them
-    extracted_effects.effects.clear();
     for (
         main_entity,
         render_entity,
         maybe_inherited_visibility,
         maybe_view_visibility,
-        effect_spawner,
+        spawn_count,
         compiled_effect,
         maybe_properties,
         transform,
     ) in q_effects.iter()
     {
+        extracted_effects
+            .effects
+            .remove(&MainEntity::from(main_entity));
+
         // Check if shaders are configured
         let Some(effect_shaders) = compiled_effect.get_configured_shaders() else {
             continue;
@@ -2402,22 +2417,35 @@ pub(crate) fn extract_effects(
             layout_flags,
         );
 
-        extracted_effects.effects.push(ExtractedEffect {
-            render_entity: *render_entity,
-            main_entity: main_entity.into(),
-            handle: compiled_effect.asset.clone(),
-            particle_layout: asset.particle_layout().clone(),
-            property_layout,
-            property_data,
-            spawn_count: effect_spawner.spawn_count,
-            prng_seed: compiled_effect.prng_seed,
-            transform: *transform,
-            layout_flags,
-            texture_layout,
-            textures: compiled_effect.textures.clone(),
-            alpha_mode,
-            effect_shaders: effect_shaders.clone(),
-        });
+        extracted_effects.effects.insert(
+            main_entity.into(),
+            ExtractedEffect {
+                render_entity: *render_entity,
+                main_entity: main_entity.into(),
+                handle: compiled_effect.asset.clone(),
+                particle_layout: asset.particle_layout().clone(),
+                property_layout,
+                property_data,
+                spawn_count: **spawn_count,
+                prng_seed: compiled_effect.prng_seed,
+                transform: *transform,
+                layout_flags,
+                texture_layout,
+                textures: compiled_effect.textures.clone(),
+                alpha_mode,
+                effect_shaders: effect_shaders.clone(),
+            },
+        );
+    }
+
+    // Only remove an effect if we didn't pick it up above.
+    // It's possible that a necessary component was removed and re-added in the
+    // same frame.
+    for main_entity in removed_effects.read() {
+        let main_entity = MainEntity::from(main_entity);
+        if !q_effects.contains(*main_entity) {
+            extracted_effects.effects.remove(&main_entity);
+        }
     }
 }
 
@@ -3032,7 +3060,7 @@ pub(crate) fn resolve_parents(
     effect_cache: Res<EffectCache>,
     mut q_parent_effects: Query<(Entity, &mut CachedParentInfo), With<CachedEffect>>,
     mut event_cache: ResMut<EventCache>,
-    mut children_from_parent: Local<HashMap<Entity, (Vec<ChildEventBuffer>, Vec<GpuChildInfo>)>>,
+    mut children_from_parent: Local<EntityHashMap<(Vec<ChildEventBuffer>, Vec<GpuChildInfo>)>>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("resolve_parents").entered();
@@ -3592,10 +3620,9 @@ pub(crate) fn prepare_effects(
 
     // Build batcher inputs from extracted effects, updating all cached components
     // for each effect on the fly.
-    let effects = std::mem::take(&mut extracted_effects.effects);
-    let extracted_effect_count = effects.len();
+    let extracted_effect_count = extracted_effects.effects.len();
     let mut prepared_effect_count = 0;
-    for extracted_effect in effects.into_iter() {
+    for extracted_effect in extracted_effects.effects.values_mut() {
         // Skip effects not cached. Since we're iterating over the extracted effects
         // instead of the cached ones, it might happen we didn't cache some effect on
         // purpose because they failed earlier validations.
@@ -3630,6 +3657,14 @@ pub(crate) fn prepare_effects(
             }
             continue;
         };
+
+        // Update the PRNG seed. Unfortunately at the minute the "seed" (which
+        // really is the internal PRNG state rather) is not cached on GPU, and
+        // is re-uploaded each frame, so if it's not changed every frame then
+        // there's no randomness anymore, because the uses of the previous frame
+        // are "forgotten".
+        let mut rng = StdRng::seed_from_u64(extracted_effect.prng_seed as u64);
+        extracted_effect.prng_seed = rng.gen();
 
         let effect_slice = EffectSlice {
             slice: cached_effect.slice.range(),
@@ -3866,7 +3901,7 @@ pub(crate) fn prepare_effects(
         );
         let mut cmd = commands.entity(extracted_effect.render_entity.id());
         cmd.insert(InstanceInput {
-            handle: extracted_effect.handle,
+            handle: extracted_effect.handle.clone(),
             entity: extracted_effect.render_entity.id(),
             main_entity: extracted_effect.main_entity,
             effect_slice: effect_slice.clone(),
@@ -3880,7 +3915,7 @@ pub(crate) fn prepare_effects(
             textures: extracted_effect.textures.clone(),
             alpha_mode: extracted_effect.alpha_mode,
             particle_layout: extracted_effect.particle_layout.clone(),
-            shaders: extracted_effect.effect_shaders,
+            shaders: extracted_effect.effect_shaders.clone(),
             spawner_index,
             spawn_count: extracted_effect.spawn_count,
             position: extracted_effect.transform.translation(),
