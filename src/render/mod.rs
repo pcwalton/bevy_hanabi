@@ -4229,7 +4229,6 @@ pub(crate) fn prepare_effects(
 
 pub(crate) fn batch_effects(
     mut effects_meta: ResMut<EffectsMeta>,
-    mut sort_bind_groups: ResMut<SortBindGroups>,
     mut q_cached_effects: Query<(
         Entity,
         &MainEntity,
@@ -6534,7 +6533,14 @@ pub(crate) fn prepare_bind_groups(
     }
 
     // Create the per-effect bind groups
-    for effect_instance in sorted_effect_batches.instances.iter() {
+    for effect_batch in sorted_effect_batches.batches.values() {
+        let representative_effect_instance_index = effect_batch.effect_instance_indices[0];
+        let Some(effect_instance) = sorted_effect_batches.get(representative_effect_instance_index)
+        else {
+            error!("Representative effect instance not found in effect batches");
+            continue;
+        };
+
         #[cfg(feature = "trace")]
         let _span_buffer = bevy::log::info_span!("create_batch_bind_groups").entered();
 

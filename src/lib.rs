@@ -191,6 +191,7 @@ use bevy::{
     render::{extract_component::ExtractComponent, sync_world::SyncToRenderWorld},
 };
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use thiserror::Error;
 
 mod asset;
@@ -1392,7 +1393,7 @@ impl CompiledParticleEffect {
         material: Option<&EffectMaterial>,
         asset: &EffectAsset,
         parent_entity: Option<Entity>,
-        child_entities: Vec<Entity>,
+        child_entities: &[Entity],
         parent_layout: Option<ParticleLayout>,
         shaders: &mut ResMut<Assets<Shader>>,
         shader_cache: &mut ResMut<ShaderCache>,
@@ -1434,7 +1435,7 @@ impl CompiledParticleEffect {
         }
 
         self.parent = parent_entity;
-        self.children = child_entities;
+        self.children = child_entities.to_vec();
 
         let num_event_bindings = self.children.len() as u32;
         let shader_source =
@@ -1654,73 +1655,59 @@ fn compile_effects(
     effects: Res<Assets<EffectAsset>>,
     mut shaders: ResMut<Assets<Shader>>,
     mut shader_cache: ResMut<ShaderCache>,
-    mut q_effects: Query<(
+    q_effects: Query<(
         Entity,
         Ref<ParticleEffect>,
         Option<Ref<EffectMaterial>>,
         Option<Ref<EffectParent>>,
-        &mut CompiledParticleEffect,
     )>,
+    mut q_compiled_effects: Query<&mut CompiledParticleEffect>,
 ) {
     trace!("compile_effects: {} effect(s)", q_effects.iter().len());
 
-    // Loop over all existing effects and collect the valid ones. We do a separate
-    // pass because we can't borrow mutably while doing a double lookup on the
-    // query. This map is used to lookup valid parents, and filter out effects with
-    // a declared parent but unresolved parent asset.
-    let particle_layouts_and_parents: EntityHashMap<(ParticleLayout, Option<Entity>)> = q_effects
-        .iter()
-        .filter_map(|(entity, effect, _, parent, _)| {
-            effects
-                .get(&effect.handle)
-                .map(|asset| (entity, (asset.particle_layout(), parent.map(|p| p.entity))))
-        })
-        .collect();
-
     // Count children
-    let mut children: EntityHashMap<Vec<Entity>> =
-        EntityHashMap::with_capacity(particle_layouts_and_parents.len());
-    for (child, (_, parent)) in particle_layouts_and_parents.iter() {
+    // FIXME(pcwalton): Use a Bevy relationship instead.
+    let mut children: EntityHashMap<SmallVec<[Entity; 4]>> = EntityHashMap::new();
+    for (child, _, _, parent) in &q_effects {
         if let Some(parent) = parent.as_ref() {
-            children.entry(*parent).or_default().push(*child);
+            children.entry(parent.entity).or_default().push(child);
         }
+    }
+    for kids in children.values_mut() {
+        kids.sort_unstable();
     }
 
     // Loop over all existing effects to update them, including invisible ones
-    for (asset, entity, effect, material, parent_entity, parent_layout, mut compiled_effect) in
+    for (asset, entity, effect, material, parent_info) in
         q_effects
-            .iter_mut()
-            .filter_map(|(entity, effect, material, parent, compiled_effect)| {
+            .iter()
+            .filter_map(|(entity, effect, material, parent)| {
                 // Check if asset is available, otherwise silently ignore as we can't check for
                 // changes, and conceptually it makes no sense to render a particle effect whose
                 // asset was unloaded.
                 let asset = effects.get(&effect.handle)?;
 
                 // Same for the parent asset, if any.
-                let (parent_entity, parent_layout) = if let Some(parent) = &parent {
-                    let Some((parent_layout, _)) = particle_layouts_and_parents.get(&parent.entity)
-                    else {
-                        // There's a parent declared, but not found. Skip the current asset.
-                        return None;
-                    };
+                let parent_entity = if let Some(parent) = &parent {
+                    // If this fails, there's a parent declared, but not
+                    // found. Skip the current asset.
+                    let parent_asset = q_effects.get(parent.entity).ok().and_then(
+                        |(_, parent_effect, _, _)| effects.get(parent_effect.handle.id()),
+                    )?;
                     // Declared parent with found parent asset, child asset is valid.
-                    (Some(parent.entity), Some(parent_layout.clone()))
+                    Some((parent.entity, parent_asset))
                 } else {
                     // No declared parent, asset is valid.
-                    (None, None)
+                    None
                 };
 
-                Some((
-                    asset,
-                    entity,
-                    effect,
-                    material,
-                    parent_entity,
-                    parent_layout,
-                    compiled_effect,
-                ))
+                Some((asset, entity, effect, material, parent_entity))
             })
     {
+        let Ok(mut compiled_effect) = q_compiled_effects.get_mut(entity) else {
+            continue;
+        };
+
         let child_entities = children
             .get_mut(&entity)
             .map(std::mem::take)
@@ -1729,20 +1716,23 @@ fn compile_effects(
         // If the ParticleEffect didn't change, and the compiled one is for the correct
         // asset, then there's nothing to do.
         let material_changed = material.as_ref().is_some_and(|r| r.is_changed());
-        let need_rebuild =
-            effect.is_changed() || material_changed || compiled_effect.children != child_entities;
+        let need_rebuild = effect.is_changed()
+            || material_changed
+            || compiled_effect.children[..] != child_entities[..];
         if need_rebuild || (compiled_effect.asset != effect.handle) {
             if need_rebuild {
                 debug!("Invalidating the compiled cache for effect on entity {:?} due to changes in the ParticleEffect component. If you see this message too much, then performance might be affected. Find why the change detection of the ParticleEffect is triggered.", entity);
             }
+
+            let parent_layout = parent_info.map(|(_, parent_asset)| parent_asset.particle_layout());
 
             compiled_effect.update(
                 need_rebuild,
                 &effect,
                 material.map(|r| r.into_inner()),
                 asset,
-                parent_entity,
-                child_entities,
+                parent_info.map(|(parent_entity, _)| parent_entity),
+                &child_entities[..],
                 parent_layout,
                 &mut shaders,
                 &mut shader_cache,
@@ -1751,17 +1741,25 @@ fn compile_effects(
     }
 
     // Clear removed effects, to allow them to be released by the asset server
-    for (_, effect, _, parent, mut compiled_effect) in q_effects.iter_mut() {
+    for (entity, effect, _, parent) in &q_effects {
         // If the effect has no asset, clear its compilation
         if effects.get(&effect.handle).is_none() {
-            compiled_effect.clear();
+            if let Ok(mut compiled_effect) = q_compiled_effects.get_mut(entity) {
+                compiled_effect.clear();
+            }
         }
 
         // If the effect has a parent, and that parent has no asset, also clear the
         // child's compilation.
         if let Some(parent) = parent {
-            if particle_layouts_and_parents.get(&parent.entity).is_none() {
-                compiled_effect.clear();
+            if q_effects
+                .get(parent.entity)
+                .ok()
+                .is_none_or(|(_, parent_effect, _, _)| !effects.contains(parent_effect.handle.id()))
+            {
+                if let Ok(mut compiled_effect) = q_compiled_effects.get_mut(entity) {
+                    compiled_effect.clear();
+                }
             }
         }
     }
