@@ -225,11 +225,13 @@ fn vertex(
     size = vec3(length(delta), size.y, 1.0);
 #endif  // RIBBONS
 
+#ifndef RAW_POSITIONS
     // Expand particle mesh vertex based on particle position ("origin"), and local
     // orientation and size of the particle mesh.
     let vpos = vertex_position * size;
     let sim_position = position + axis_x * vpos.x + axis_y * vpos.y + axis_z * vpos.z;
     out.position = transform_position_simulation_to_clip(sim_position, spawner_index);
+#endif  // RAW_POSITIONS
 
     out.color = color;
 

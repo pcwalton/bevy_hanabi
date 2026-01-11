@@ -1008,6 +1008,11 @@ fn append_spawn_events_{0}(effect_metadata_index: u32, particle_index: u32, coun
             layout_flags |= LayoutFlags::READ_PARENT_PARTICLE;
         }
 
+        let emits_raw_positions = asset
+            .render_modifiers()
+            .any(|render_modifier| render_modifier.emits_raw_positions());
+        layout_flags.set(LayoutFlags::RAW_POSITIONS, emits_raw_positions);
+
         // Generate the shader code for the initializing shader
         let (init_code, init_extra, init_sim_space_transform_code, consume_gpu_spawn_events) = {
             // Apply all the init modifiers

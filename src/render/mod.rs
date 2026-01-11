@@ -1691,6 +1691,10 @@ pub(crate) struct ParticleRenderPipelineKey {
     /// Key: RIBBONS
     /// The effect has ribbons.
     ribbons: bool,
+    /// Key: RAW_POSITIONS
+    /// The effect contains a render modifier that emits raw positions instead
+    /// of using `axis_x` and `axis_y`.
+    emits_raw_positions: bool,
     /// For dual-mode configurations only, the actual mode of the current render
     /// pipeline. Otherwise the mode is implicitly determined by the active
     /// feature.
@@ -1732,6 +1736,7 @@ impl Default for ParticleRenderPipelineKey {
             needs_normal: false,
             needs_particle_fragment: false,
             ribbons: false,
+            emits_raw_positions: false,
             #[cfg(all(feature = "2d", feature = "3d"))]
             pipeline_mode: PipelineMode::Camera3d,
             msaa_samples: Msaa::default().samples(),
@@ -1861,6 +1866,11 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
         // Key: RIBBONS
         if key.ribbons {
             shader_defs.push("RIBBONS".into());
+        }
+
+        // Key: RAW_POSITIONS
+        if key.emits_raw_positions {
+            shader_defs.push("RAW_POSITIONS".into());
         }
 
         #[cfg(feature = "2d")]
@@ -2934,6 +2944,9 @@ bitflags! {
         const NEEDS_PARTICLE_FRAGMENT = (1 << 12);
         /// The effect has a transmissive material.
         const TRANSMISSIVE = (1 << 13);
+        /// The effect contains a render modifier that emits raw positions
+        /// instead of using `axis_x` and `axis_y`.
+        const RAW_POSITIONS = (1 << 14);
     }
 }
 
@@ -5525,6 +5538,9 @@ fn emit_sorted_draw<T, F>(
                 .layout_flags
                 .contains(LayoutFlags::NEEDS_PARTICLE_FRAGMENT);
             let ribbons = effect_instance.layout_flags.contains(LayoutFlags::RIBBONS);
+            let emits_raw_positions = effect_instance
+                .layout_flags
+                .contains(LayoutFlags::RAW_POSITIONS);
             let image_count = effect_instance.texture_layout.layout.len() as u8;
 
             // FIXME - Maybe it's better to copy the mesh layout into the batch, instead of
@@ -5568,6 +5584,7 @@ fn emit_sorted_draw<T, F>(
                     needs_normal,
                     needs_particle_fragment,
                     ribbons,
+                    emits_raw_positions,
                     #[cfg(all(feature = "2d", feature = "3d"))]
                     pipeline_mode,
                     msaa_samples: msaa.samples(),
@@ -5715,6 +5732,9 @@ fn emit_binned_draw<T, F, G>(
                 .layout_flags
                 .contains(LayoutFlags::NEEDS_PARTICLE_FRAGMENT);
             let ribbons = effect_instance.layout_flags.contains(LayoutFlags::RIBBONS);
+            let emits_raw_positions = effect_instance
+                .layout_flags
+                .contains(LayoutFlags::RAW_POSITIONS);
             let image_count = effect_instance.texture_layout.layout.len() as u8;
             let render_mesh = render_meshes.get(effect_instance.mesh);
 
@@ -5756,6 +5776,7 @@ fn emit_binned_draw<T, F, G>(
                     needs_normal,
                     needs_particle_fragment,
                     ribbons,
+                    emits_raw_positions,
                     #[cfg(all(feature = "2d", feature = "3d"))]
                     pipeline_mode,
                     msaa_samples: msaa.samples(),

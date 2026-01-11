@@ -568,6 +568,10 @@ pub trait RenderModifier: Modifier {
     fn reads_view_transmission_texture(&self) -> bool {
         false
     }
+
+    fn emits_raw_positions(&self) -> bool {
+        false
+    }
 }
 
 impl Clone for Box<dyn RenderModifier> {
