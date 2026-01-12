@@ -4,7 +4,7 @@
     seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
     rand_normal_f, rand_normal_vec2, rand_normal_vec3, rand_normal_vec4, proj,
-    quat_conj, quat_mul, quat_vec_mul, inv_orthonormal_3x4, unpack_compressed_transform,
+    quat_conj, quat_mul, quat_rotate, inv_orthonormal_3x4, unpack_compressed_transform,
     get_column
 }
 

@@ -2142,6 +2142,10 @@ pub enum BinaryOperator {
     GetColumn,
 
     Mat2x2,
+
+    QuatMul,
+
+    QuatRotate,
 }
 
 impl BinaryOperator {
@@ -2176,7 +2180,9 @@ impl BinaryOperator {
             | BinaryOperator::Vec2
             | BinaryOperator::Vec4XyzW
             | BinaryOperator::GetColumn
-            | BinaryOperator::Mat2x2 => true,
+            | BinaryOperator::Mat2x2
+            | BinaryOperator::QuatMul
+            | BinaryOperator::QuatRotate => true,
         }
     }
 
@@ -2222,6 +2228,8 @@ impl ToWgslString for BinaryOperator {
             BinaryOperator::Vec4XyzW => "vec4".to_string(),
             BinaryOperator::GetColumn => "get_column".to_string(),
             BinaryOperator::Mat2x2 => "mat2x2".to_string(),
+            BinaryOperator::QuatMul => "quat_mul".to_string(),
+            BinaryOperator::QuatRotate => "quat_rotate".to_string(),
         }
     }
 }

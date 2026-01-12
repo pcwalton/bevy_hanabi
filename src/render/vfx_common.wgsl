@@ -390,6 +390,6 @@ fn quat_mul(q0: vec4<f32>, q1: vec4<f32>) -> vec4<f32> {
     );
 }
 
-fn quat_vec_mul(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+fn quat_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     return quat_mul(quat_mul(q, vec4(v, 0.0f)), quat_conj(q)).xyz;
 }
