@@ -882,6 +882,9 @@ pub enum Expr {
     /// An expression to sample a texture from the effect's material. Currently
     /// only color textures (returning a `vec4<f32>`) are supported.
     TextureSample(TextureSampleExpr),
+
+    /// Access to LUT textures.
+    LutSample { index: u32, coords: ExprHandle },
 }
 
 impl Expr {
@@ -928,6 +931,7 @@ impl Expr {
             } => module.is_const(*first) && module.is_const(*second) && module.is_const(*third),
             Expr::Cast(expr) => module.is_const(expr.inner),
             Expr::TextureSample(_) => false,
+            Expr::LutSample { .. } => false,
         }
     }
 
@@ -950,6 +954,7 @@ impl Expr {
             Expr::Ternary { .. } => false,
             Expr::Cast(_) => false,
             Expr::TextureSample(_) => false,
+            Expr::LutSample { .. } => false,
         }
     }
 
@@ -984,6 +989,7 @@ impl Expr {
             Expr::Ternary { .. } => None,
             Expr::Cast(expr) => Some(expr.value_type()),
             Expr::TextureSample(expr) => Some(expr.value_type()),
+            Expr::LutSample { .. } => None,
         }
     }
 
@@ -1156,6 +1162,10 @@ impl Expr {
                 Ok(format!("{}({})", expr.target.to_wgsl_string(), inner))
             }
             Expr::TextureSample(expr) => expr.eval(module, context),
+            Expr::LutSample { index, coords } => Ok(format!(
+                "textureSampleLevel(lut_texture_{index}, lut_sampler_{index}, {}, 0.0)",
+                context.eval(module, *coords)?
+            )),
         }
     }
 }

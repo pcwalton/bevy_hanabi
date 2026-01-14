@@ -2,6 +2,7 @@
 use bevy::asset::{io::Reader, AssetLoader, LoadContext};
 use bevy::{
     asset::{Asset, Assets, Handle},
+    image::Image,
     log::trace,
     math::{Vec2, Vec3},
     platform::collections::HashSet,
@@ -336,6 +337,7 @@ pub struct EffectAsset {
     module: Module,
     /// Alpha mode.
     pub alpha_mode: AlphaMode,
+    pub luts: Luts,
     /// The mesh that each particle renders.
     ///
     /// If `None`, the effect uses the [`DefaultMesh`].
@@ -646,6 +648,11 @@ impl EffectAsset {
         self.mesh = Some(mesh);
         self
     }
+
+    pub fn lut(mut self, lut: Handle<Image>) -> Self {
+        self.luts.images.push(lut);
+        self
+    }
 }
 
 /// Asset loader for [`EffectAsset`].
@@ -732,6 +739,13 @@ impl EffectParent {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ParticleTrails {
     pub spawn_period: f32,
+}
+
+#[derive(Clone, Default, Debug, Reflect)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Luts {
+    #[serde(skip)]
+    pub images: Vec<Handle<Image>>,
 }
 
 #[cfg(test)]

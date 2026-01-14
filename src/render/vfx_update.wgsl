@@ -42,6 +42,7 @@ struct ParentParticleBuffer {
 // "spawner" group @2
 @group(2) @binding(0) var<storage, read> spawners : array<Spawner>;
 {{PROPERTIES_BINDING}}
+{{LUT_BINDING}}
 
 // "metadata" group @3
 @group(3) @binding(0) var<storage, read> batch_descriptor : BatchDescriptor;

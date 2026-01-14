@@ -222,6 +222,8 @@ pub use render::{DebugSettings, LayoutFlags, ShaderCache};
 pub use spawn::{tick_spawners, CpuValue, EffectSpawner, Random, SpawnCount, SpawnerSettings};
 pub use time::{EffectSimulation, EffectSimulationTime};
 
+use crate::asset::Luts;
+
 #[allow(missing_docs)]
 pub mod prelude {
     #[doc(hidden)]
@@ -939,6 +941,12 @@ impl EffectShaderSource {
             "@group(2) @binding(1) var<storage, read> properties : array<Properties>;".to_string()
         };
 
+        // Generate the shader code declaring the per-effect LUTs.
+        let lut_binding_code = asset
+            .luts
+            .generate_code()
+            .unwrap_or_else(|| "// no LUTs".to_string());
+
         // Event buffer bindings for the update pass, if the effect emits GPU events to
         // one or more other effects.
         let mut emit_event_buffer_bindings_code = String::with_capacity(256);
@@ -1054,6 +1062,7 @@ fn append_spawn_events_{0}(effect_metadata_index: u32, particle_index: u32, coun
             .replace("{{INIT_EXTRA}}", &init_extra)
             .replace("{{PROPERTIES}}", &properties_code)
             .replace("{{PROPERTIES_BINDING}}", &properties_binding_code)
+            .replace("{{LUT_BINDING}}", &lut_binding_code)
             .replace(
                 "{{SIMULATION_SPACE_TRANSFORM_PARTICLE}}",
                 &init_sim_space_transform_code,
@@ -1283,6 +1292,7 @@ fn append_spawn_events_{0}(effect_metadata_index: u32, particle_index: u32, coun
             .replace("{{UPDATE_EXTRA}}", &update_extra)
             .replace("{{PROPERTIES}}", &properties_code)
             .replace("{{PROPERTIES_BINDING}}", &properties_binding_code)
+            .replace("{{LUT_BINDING}}", &lut_binding_code)
             .replace(
                 "{{EMIT_EVENT_BUFFER_BINDINGS}}",
                 &emit_event_buffer_bindings_code,
@@ -1799,6 +1809,30 @@ fn update_properties_from_asset(
         };
 
         EffectProperties::update(properties, asset.properties(), effect.is_added());
+    }
+}
+
+impl Luts {
+    fn generate_code(&self) -> Option<String> {
+        if self.images.is_empty() {
+            return None;
+        }
+
+        let mut code = String::new();
+        for image_index in 0..self.images.len() {
+            writeln!(
+                code,
+                "
+                @group(1) @binding({}) var lut_texture_{}: texture_2d<f32>;
+                @group(1) @binding({}) var lut_sampler_{}: sampler;",
+                image_index * 2 + 3,
+                image_index,
+                image_index * 2 + 4,
+                image_index
+            )
+            .ok()?;
+        }
+        Some(code)
     }
 }
 

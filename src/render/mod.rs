@@ -16,7 +16,7 @@ use bevy::math::FloatOrd;
 use bevy::{
     core_pipeline::core_3d::ViewTransmissionTexture,
     ecs::entity::{EntityHashMap, EntityHashSet},
-    render::sync_world::MainEntityHashSet,
+    render::{sync_world::MainEntityHashSet, texture::FallbackImage},
 };
 #[cfg(feature = "3d")]
 use bevy::{
@@ -67,7 +67,7 @@ use gpu_buffer::GpuBuffer;
 use rand::{rngs::StdRng, Rng as _, SeedableRng as _};
 
 use crate::{
-    asset::{DefaultMesh, EffectAsset},
+    asset::{DefaultMesh, EffectAsset, Luts},
     calc_func_id,
     render::{
         batch::{
@@ -2016,6 +2016,8 @@ pub(crate) struct ExtractedEffect {
     pub texture_layout: TextureLayout,
     /// Textures.
     pub textures: Vec<Handle<Image>>,
+    /// Lookup table textures.
+    pub luts: Luts,
     /// Alpha mode.
     pub alpha_mode: AlphaMode,
     /// Effect shaders.
@@ -2052,6 +2054,7 @@ pub struct AddedEffect {
     /// Layout of properties for the effect, if properties are used at all, or
     /// an empty layout.
     pub property_layout: PropertyLayout,
+    pub luts: Luts,
     /// Effect flags.
     pub layout_flags: LayoutFlags,
     /// Handle of the effect asset.
@@ -2309,6 +2312,7 @@ pub(crate) fn extract_effects(
                 .mesh
                 .clone()
                 .unwrap_or(default_mesh.0.clone());
+            let luts = asset.luts.clone();
 
             trace!(
                 "Found new effect: entity {:?} | render entity {:?} | capacity {:?} | particle_layout {:?} | \
@@ -2338,6 +2342,7 @@ pub(crate) fn extract_effects(
                 parent,
                 particle_layout,
                 property_layout,
+                luts,
                 layout_flags: compiled_effect.layout_flags,
                 handle,
             })
@@ -2524,6 +2529,7 @@ fn extract_effect(
             layout_flags,
             texture_layout,
             textures: compiled_effect.textures.clone(),
+            luts: asset.luts.clone(),
             alpha_mode,
             effect_shaders: effect_shaders.clone(),
         },
@@ -2852,6 +2858,7 @@ impl EffectsMeta {
                 effect_cache.ensure_particle_bind_group_layout(
                     added_effect.particle_layout.min_binding_size32(),
                     parent_min_binding_size,
+                    added_effect.luts.images.len() as u32,
                 );
             }
 
@@ -6168,6 +6175,8 @@ pub(crate) fn prepare_bind_groups(
     mut sort_bind_groups: ResMut<SortBindGroups>,
     property_cache: Res<PropertyCache>,
     sorted_effect_batches: Res<SortedEffects>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    fallback_images: Res<FallbackImage>,
     render_device: Res<RenderDevice>,
     (
         dispatch_indirect_pipeline,
@@ -6183,7 +6192,6 @@ pub(crate) fn prepare_bind_groups(
         Res<ParticlesUpdatePipeline>,
     ),
     render_pipeline: ResMut<ParticlesRenderPipeline>,
-    gpu_images: Res<RenderAssets<GpuImage>>,
 ) {
     // We can't simulate nor render anything without at least the spawner buffer
     if effects_meta.spawner_buffer.is_empty() {
@@ -6591,9 +6599,12 @@ pub(crate) fn prepare_bind_groups(
             .create_particle_sim_bind_group(
                 effect_instance.buffer_index,
                 &render_device,
+                &gpu_images,
+                &fallback_images,
                 effect_instance.particle_layout.min_binding_size32(),
                 effect_instance.parent_min_binding_size,
                 effect_instance.parent_binding_source.as_ref(),
+                &effect_instance.luts,
             )
             .is_err()
         {

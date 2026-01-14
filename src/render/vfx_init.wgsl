@@ -37,6 +37,7 @@ struct ParentParticleBuffer {
 #ifdef READ_PARENT_PARTICLE
 @group(1) @binding(2) var<storage, read> parent_particle_buffer : ParentParticleBuffer;
 #endif
+{{LUT_BINDING}}
 
 // "spawner" group @2
 @group(2) @binding(0) var<storage, read> spawners : array<Spawner>;

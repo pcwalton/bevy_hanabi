@@ -15,6 +15,7 @@ use super::{
     BufferBindingSource, CachedMesh, LayoutFlags, PropertyBindGroupKey,
 };
 use crate::{
+    asset::Luts,
     render::{CachedMeshLocation, ExtractedEffect},
     AlphaMode, EffectAsset, ParticleLayout, TextureLayout,
 };
@@ -84,6 +85,8 @@ pub(crate) struct EffectInstance {
     pub texture_layout: TextureLayout,
     /// Textures.
     pub textures: Vec<Handle<Image>>,
+    /// Lookup table textures.
+    pub luts: Luts,
     /// Alpha mode.
     pub alpha_mode: AlphaMode,
     /// Entities holding the source [`ParticleEffect`] instances which were
@@ -386,6 +389,7 @@ impl EffectInstance {
             mesh: cached_mesh.mesh,
             texture_layout: extracted_effect.texture_layout.clone(),
             textures: extracted_effect.textures.clone(),
+            luts: extracted_effect.luts.clone(),
             alpha_mode: extracted_effect.alpha_mode,
             entities: vec![main_entity.id().index()],
             cached_effect_events: cached_effect_events.cloned(),

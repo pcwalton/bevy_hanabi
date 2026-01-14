@@ -5,18 +5,25 @@ use std::{
 };
 
 use bevy::{
-    asset::Handle,
+    asset::{AssetId, Handle},
     ecs::{component::Component, resource::Resource},
+    image::Image,
     log::{trace, warn},
     platform::collections::HashMap,
-    render::{render_resource::*, renderer::RenderDevice},
+    render::{
+        render_asset::RenderAssets,
+        render_resource::*,
+        renderer::RenderDevice,
+        texture::{FallbackImage, GpuImage},
+    },
     utils::default,
 };
 use bytemuck::cast_slice_mut;
+use smallvec::SmallVec;
 
 use super::{buffer_table::BufferTableId, BufferBindingSource};
 use crate::{
-    asset::EffectAsset,
+    asset::{EffectAsset, Luts},
     render::{
         calc_hash,
         event::{GpuBatchEffectIndices, GpuChildInfo},
@@ -81,42 +88,44 @@ impl SliceRef {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct SimBindGroupKey {
-    buffer: Option<BufferId>,
-    offset: u32,
-    size: u32,
+    parent: Option<SimParentBindGroupKey>,
+    // Each image will only be `Some` if it's loaded.
+    luts: SmallVec<[Option<AssetId<Image>>; 2]>,
 }
 
 impl SimBindGroupKey {
     /// Invalid key, often used as placeholder.
     pub const INVALID: Self = Self {
-        buffer: None,
-        offset: u32::MAX,
-        size: 0,
+        parent: None,
+        luts: SmallVec::new_const(),
     };
-}
 
-impl From<&BufferBindingSource> for SimBindGroupKey {
-    fn from(value: &BufferBindingSource) -> Self {
+    pub fn new(
+        parent: Option<&BufferBindingSource>,
+        luts: impl Iterator<Item = Option<AssetId<Image>>>,
+    ) -> SimBindGroupKey {
         Self {
-            buffer: Some(value.buffer.id()),
-            offset: value.offset,
-            size: value.size.get(),
+            parent: parent.map(|parent| SimParentBindGroupKey::new(parent)),
+            luts: luts.collect(),
         }
     }
 }
 
-impl From<Option<&BufferBindingSource>> for SimBindGroupKey {
-    fn from(value: Option<&BufferBindingSource>) -> Self {
-        if let Some(bbs) = value {
-            Self {
-                buffer: Some(bbs.buffer.id()),
-                offset: bbs.offset,
-                size: bbs.size.get(),
-            }
-        } else {
-            Self::INVALID
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct SimParentBindGroupKey {
+    buffer: Option<BufferId>,
+    offset: u32,
+    size: u32,
+}
+
+impl SimParentBindGroupKey {
+    fn new(source: &BufferBindingSource) -> SimParentBindGroupKey {
+        SimParentBindGroupKey {
+            buffer: Some(source.buffer.id()),
+            offset: source.offset,
+            size: source.size.get(),
         }
     }
 }
@@ -364,42 +373,52 @@ impl EffectBuffer {
         layout: &BindGroupLayout,
         buffer_index: u32,
         render_device: &RenderDevice,
+        gpu_images: &RenderAssets<GpuImage>,
+        fallback_images: &FallbackImage,
         parent_binding_source: Option<&BufferBindingSource>,
+        luts: &Luts,
     ) {
-        let key: SimBindGroupKey = parent_binding_source.into();
+        let key: SimBindGroupKey = SimBindGroupKey::new(
+            parent_binding_source,
+            luts.images
+                .iter()
+                .map(|lut_image| gpu_images.get(lut_image).map(|_| lut_image.id())),
+        );
         if self.sim_bind_group.is_some() && self.sim_bind_group_key == key {
             return;
         }
 
         let label = format!("hanabi:bind_group:sim:particle@1:vfx{}", buffer_index);
-        let entries: &[BindGroupEntry] =
-            if let Some(parent_binding) = parent_binding_source.as_ref().map(|bbs| bbs.binding()) {
-                &[
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: self.max_binding(),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: self.indirect_index_max_binding(),
-                    },
-                    BindGroupEntry {
-                        binding: 2,
-                        resource: parent_binding,
-                    },
-                ]
-            } else {
-                &[
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: self.max_binding(),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: self.indirect_index_max_binding(),
-                    },
-                ]
-            };
+
+        let mut entries = vec![
+            BindGroupEntry {
+                binding: 0,
+                resource: self.max_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: self.indirect_index_max_binding(),
+            },
+        ];
+        if let Some(parent_binding) = parent_binding_source.as_ref().map(|bbs| bbs.binding()) {
+            entries.push(BindGroupEntry {
+                binding: 2,
+                resource: parent_binding,
+            });
+        }
+        for lut in &luts.images {
+            let gpu_image = gpu_images.get(lut).unwrap_or(&fallback_images.d2);
+            entries.extend([
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::TextureView(&gpu_image.texture_view),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: BindingResource::Sampler(&gpu_image.sampler),
+                },
+            ])
+        }
 
         trace!(
             "Create particle simulation bind group '{}' with {} entries (has_parent:{})",
@@ -407,7 +426,7 @@ impl EffectBuffer {
             entries.len(),
             parent_binding_source.is_some(),
         );
-        let bind_group = render_device.create_bind_group(Some(&label[..]), layout, entries);
+        let bind_group = render_device.create_bind_group(Some(&label[..]), layout, &entries);
         self.sim_bind_group = Some(bind_group);
         self.sim_bind_group_key = key;
     }
@@ -797,11 +816,12 @@ impl EffectCache {
     //
 
     /// Ensure a bind group layout exists for the bind group @1 ("particles")
-    /// for use with the given min binding sizes.
+    /// for use with the given min binding size and LUT counts.
     pub fn ensure_particle_bind_group_layout(
         &mut self,
         min_binding_size: NonZeroU32,
         parent_min_binding_size: Option<NonZeroU32>,
+        lut_count: u32,
     ) -> &BindGroupLayout {
         // FIXME - This "ensure" pattern means we never de-allocate entries. This is
         // probably fine, because there's a limited number of realistic combinations,
@@ -818,6 +838,7 @@ impl EffectCache {
                     &self.render_device,
                     min_binding_size,
                     parent_min_binding_size,
+                    lut_count,
                 )
             })
     }
@@ -909,13 +930,20 @@ impl EffectCache {
         &mut self,
         buffer_index: u32,
         render_device: &RenderDevice,
+        gpu_images: &RenderAssets<GpuImage>,
+        fallback_images: &FallbackImage,
         min_binding_size: NonZeroU32,
         parent_min_binding_size: Option<NonZeroU32>,
         parent_binding_source: Option<&BufferBindingSource>,
+        luts: &Luts,
     ) -> Result<(), ()> {
         // Create the bind group
         let layout = self
-            .ensure_particle_bind_group_layout(min_binding_size, parent_min_binding_size)
+            .ensure_particle_bind_group_layout(
+                min_binding_size,
+                parent_min_binding_size,
+                luts.images.len() as u32,
+            )
             .clone();
         let slot = self.buffers.get_mut(buffer_index as usize).ok_or(())?;
         let effect_buffer = slot.as_mut().ok_or(())?;
@@ -923,7 +951,10 @@ impl EffectCache {
             &layout,
             buffer_index,
             render_device,
+            gpu_images,
+            fallback_images,
             parent_binding_source,
+            luts,
         );
         Ok(())
     }
@@ -935,6 +966,7 @@ fn create_particle_sim_bind_group_layout(
     render_device: &RenderDevice,
     particle_layout_min_binding_size: NonZeroU32,
     parent_particle_layout_min_binding_size: Option<NonZeroU32>,
+    lut_count: u32,
 ) -> BindGroupLayout {
     let mut entries = Vec::with_capacity(3);
 
@@ -977,6 +1009,27 @@ fn create_particle_sim_bind_group_layout(
             },
             count: None,
         });
+    }
+
+    for lut_index in 0..lut_count {
+        entries.extend([
+            BindGroupLayoutEntry {
+                binding: 2 * lut_index + 3,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2 * lut_index + 4,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ]);
     }
 
     let hash = calc_hash(&entries);

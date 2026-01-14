@@ -161,6 +161,9 @@ name = "ordering"
 [[example]]
 name = "puffs"
 
+[[example]]
+name = "noise"
+
 [[test]]
 name = "empty_effect"
 path = "gpu_tests/empty_effect.rs"
