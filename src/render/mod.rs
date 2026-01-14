@@ -1,7 +1,7 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     marker::PhantomData,
-    mem::{self, take},
+    mem,
     num::{NonZeroU32, NonZeroU64},
     ops::{Deref, DerefMut, Range},
     path::PathBuf,
@@ -2069,6 +2069,8 @@ pub(crate) struct ExtractedEffects {
     pub effects: MainEntityHashMap<ExtractedEffect>,
     /// Newly added effects without a GPU allocation yet.
     pub added_effects: Vec<AddedEffect>,
+    pub effects_pending_update: MainEntityHashSet,
+    pub effects_pending_addition: MainEntityHashSet,
     pub dirty: bool,
 }
 
@@ -2192,19 +2194,15 @@ type EffectExtractionQuery<'w> = (
 /// [`ParticleEffect`]: crate::ParticleEffect
 #[allow(unsafe_code)]
 pub(crate) fn extract_effects(
+    mut commands: Commands,
     real_time: Extract<Res<Time<Real>>>,
     virtual_time: Extract<Res<Time<Virtual>>>,
     time: Extract<Res<Time<EffectSimulation>>>,
     effects: Extract<Res<Assets<EffectAsset>>>,
-    q_added_effects: Extract<
+    q_added_effects: Extract<Query<Entity, Added<CompiledParticleEffect>>>,
+    q_changed_effects: Extract<
         Query<
-            (Entity, &RenderEntity, Ref<CompiledParticleEffect>),
-            (Added<CompiledParticleEffect>, With<GlobalTransform>),
-        >,
-    >,
-    q_effects: Extract<
-        Query<
-            EffectExtractionQuery,
+            Entity,
             Or<(
                 Changed<InheritedVisibility>,
                 Changed<ViewVisibility>,
@@ -2216,7 +2214,6 @@ pub(crate) fn extract_effects(
         >,
     >,
     q_all_effects: Extract<Query<EffectExtractionQuery>>,
-    mut pending_effects: Local<Vec<MainEntity>>,
     render_device: Res<RenderDevice>,
     debug_settings: Extract<Res<DebugSettings>>,
     default_mesh: Extract<Res<DefaultMesh>>,
@@ -2224,7 +2221,6 @@ pub(crate) fn extract_effects(
     mut extracted_effects: ResMut<ExtractedEffects>,
     mut render_debug_settings: ResMut<RenderDebugSettings>,
     mut removed_effects: Extract<RemovedComponents<CompiledParticleEffect>>,
-    mut reextract_next_frame: Local<MainEntityHashSet>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("extract_effects").entered();
@@ -2279,135 +2275,130 @@ pub(crate) fn extract_effects(
     sim_params.real_time = real_time.elapsed_secs_f64();
     sim_params.real_delta_time = real_time.delta_secs();
 
+    let effects_pending_update = mem::take(&mut extracted_effects.effects_pending_update);
+    let effects_pending_addition = mem::take(&mut extracted_effects.effects_pending_addition);
+
+    extracted_effects.added_effects.clear();
+    extracted_effects.dirty = false;
+
     // Collect added effects for later GPU data allocation
-    extracted_effects.added_effects = q_added_effects
+    for main_entity in q_added_effects
         .iter()
-        .chain(take(&mut *pending_effects).into_iter().filter_map(|main_entity| {
-            q_all_effects.get(main_entity.id()).ok().map(
-                |(_, render_entity, _, _, _, compiled_particle_effect, _, _)| {
-                    (main_entity.id(), render_entity, compiled_particle_effect)
-                })
-        }))
-        .filter_map(|(entity, render_entity, compiled_effect)| {
-            let handle = compiled_effect.asset.clone();
-            let asset = match effects.get(&compiled_effect.asset) {
-                None => {
-                    // The effect wasn't ready yet. Retry on subsequent frames.
-                    trace!("Failed to find asset for {:?}/{:?}, deferring to next frame", entity, render_entity);
-                    pending_effects.push(entity.into());
-                    return None;
-                }
-                Some(asset) => asset,
-            };
-            let particle_layout = asset.particle_layout();
-            assert!(
-                particle_layout.size() > 0,
-                "Invalid empty particle layout for effect '{}' on entity {:?} (render entity {:?}). Did you forget to add some modifier to the asset?",
-                asset.name,
-                entity,
-                render_entity.id(),
-            );
-            let property_layout = asset.property_layout();
-            let mesh = compiled_effect
-                .mesh
-                .clone()
-                .unwrap_or(default_mesh.0.clone());
-            let luts = asset.luts.clone();
-
-            trace!(
-                "Found new effect: entity {:?} | render entity {:?} | capacity {:?} | particle_layout {:?} | \
-                 property_layout {:?} | layout_flags {:?} | mesh {:?}",
-                 entity,
-                 render_entity.id(),
-                 asset.capacity(),
-                 particle_layout,
-                 property_layout,
-                 compiled_effect.layout_flags,
-                 mesh);
-
-            // FIXME - fixed 256 events per child (per frame) for now... this neatly avoids any issue with alignment 32/256 byte storage buffer align for bind groups
-            const FIXME_HARD_CODED_EVENT_COUNT: u32 = 256;
-            let parent = compiled_effect.parent.map(|entity| AddedEffectParent {
-                entity: entity.into(),
-                layout: compiled_effect.parent_particle_layout.as_ref().unwrap().clone(),
-                event_count: FIXME_HARD_CODED_EVENT_COUNT,
-            });
-
-            trace!("Found new effect: entity {:?} | capacity {:?} | particle_layout {:?} | property_layout {:?} | layout_flags {:?}", entity, asset.capacity(), particle_layout, property_layout, compiled_effect.layout_flags);
-            Some(AddedEffect {
-                entity: MainEntity::from(entity),
-                render_entity: *render_entity,
-                capacity: asset.capacity(),
-                mesh,
-                parent,
-                particle_layout,
-                property_layout,
-                luts,
-                layout_flags: compiled_effect.layout_flags,
-                handle,
-            })
-        })
-        .collect();
-
-    extracted_effects.dirty = !extracted_effects.added_effects.is_empty();
-
-    // Loop over all existing effects to extract them
-    for (
-        main_entity,
-        render_entity,
-        maybe_inherited_visibility,
-        maybe_view_visibility,
-        spawn_count,
-        compiled_effect,
-        maybe_properties,
-        transform,
-    ) in q_effects.iter()
+        .map(MainEntity::from)
+        .chain(effects_pending_addition)
     {
-        extract_effect(
-            main_entity.into(),
-            render_entity,
-            maybe_inherited_visibility,
-            maybe_view_visibility,
-            &spawn_count,
-            &compiled_effect,
-            maybe_properties,
-            transform,
-            &q_all_effects,
-            &effects,
-            &mut extracted_effects,
-            &mut reextract_next_frame,
-        );
-    }
-
-    let to_reextract = take(&mut *reextract_next_frame);
-    for main_entity in to_reextract {
-        let Ok((
-            main_entity,
-            render_entity,
-            maybe_inherited_visibility,
-            maybe_view_visibility,
-            spawn_count,
-            compiled_effect,
-            maybe_properties,
-            transform,
-        )) = q_effects.get(main_entity.entity())
+        let Ok((_, render_entity, _, _, _, compiled_effect, _, _)) =
+            q_all_effects.get(main_entity.id())
         else {
+            trace!(
+                "Required components weren't available for newly-added effect {:?}",
+                main_entity
+            );
+            extracted_effects
+                .effects_pending_addition
+                .insert(main_entity);
             continue;
         };
-        extract_effect(
-            main_entity.into(),
-            render_entity,
-            maybe_inherited_visibility,
-            maybe_view_visibility,
-            &spawn_count,
-            &compiled_effect,
-            maybe_properties,
-            transform,
-            &q_all_effects,
-            &effects,
-            &mut extracted_effects,
-            &mut reextract_next_frame,
+
+        let handle = compiled_effect.asset.clone();
+        let asset = match effects.get(&compiled_effect.asset) {
+            None => {
+                // The effect wasn't ready yet. Retry on subsequent frames.
+                trace!(
+                    "Failed to find asset for {:?}/{:?}, deferring to next frame",
+                    main_entity,
+                    render_entity
+                );
+                extracted_effects
+                    .effects_pending_addition
+                    .insert(main_entity);
+                continue;
+            }
+            Some(asset) => asset,
+        };
+        let particle_layout = asset.particle_layout();
+        assert!(
+            particle_layout.size() > 0,
+            "Invalid empty particle layout for effect '{}' on entity {:?} (render entity {:?}). Did you forget to add some modifier to the asset?",
+            asset.name,
+            main_entity,
+            render_entity.id(),
         );
+        let property_layout = asset.property_layout();
+        let mesh = compiled_effect
+            .mesh
+            .clone()
+            .unwrap_or(default_mesh.0.clone());
+        let luts = asset.luts.clone();
+
+        trace!(
+            "Found new effect: entity {:?} | render entity {:?} | capacity {:?} | particle_layout {:?} | \
+                property_layout {:?} | layout_flags {:?} | mesh {:?}",
+                main_entity,
+                render_entity.id(),
+                asset.capacity(),
+                particle_layout,
+                property_layout,
+                compiled_effect.layout_flags,
+                mesh);
+
+        // FIXME - fixed 256 events per child (per frame) for now... this neatly avoids any issue with alignment 32/256 byte storage buffer align for bind groups
+        const FIXME_HARD_CODED_EVENT_COUNT: u32 = 256;
+        let parent = compiled_effect.parent.map(|entity| AddedEffectParent {
+            entity: entity.into(),
+            layout: compiled_effect
+                .parent_particle_layout
+                .as_ref()
+                .unwrap()
+                .clone(),
+            event_count: FIXME_HARD_CODED_EVENT_COUNT,
+        });
+
+        trace!(
+            "Found new effect: entity {:?} | capacity {:?} | particle_layout {:?} | property_layout {:?} | layout_flags {:?}",
+            main_entity,
+            asset.capacity(),
+            particle_layout,
+            property_layout,
+            compiled_effect.layout_flags,
+        );
+        extracted_effects.added_effects.push(AddedEffect {
+            entity: main_entity,
+            render_entity: *render_entity,
+            capacity: asset.capacity(),
+            mesh,
+            parent,
+            particle_layout,
+            property_layout,
+            luts,
+            layout_flags: compiled_effect.layout_flags,
+            handle,
+        });
+
+        extracted_effects.dirty = true;
+    }
+
+    // Loop over all existing effects to extract them
+    for main_entity in q_changed_effects
+        .iter()
+        .map(MainEntity::from)
+        .chain(effects_pending_update.into_iter())
+    {
+        match extract_effect(main_entity, &q_all_effects, &effects) {
+            Some(extracted_effect) => {
+                extracted_effects
+                    .effects
+                    .insert(main_entity, extracted_effect);
+                extracted_effects.dirty = true;
+            }
+            None => {
+                trace!(
+                    "Failed to update effect {:?}; retrying next frame",
+                    main_entity
+                );
+                extracted_effects.effects_pending_update.insert(main_entity);
+            }
+        }
     }
 
     // Only remove an effect if we didn't pick it up above.
@@ -2415,34 +2406,33 @@ pub(crate) fn extract_effects(
     // same frame.
     for main_entity in removed_effects.read() {
         let main_entity = MainEntity::from(main_entity);
-        if !q_all_effects.contains(*main_entity) {
-            extracted_effects.effects.remove(&main_entity);
-            extracted_effects.dirty = true;
+        if q_all_effects.contains(*main_entity) {
+            continue;
         }
+        extracted_effects.effects.remove(&main_entity);
+        commands.entity(*main_entity).remove::<CachedEffect>();
+        extracted_effects.dirty = true;
     }
 }
 
 fn extract_effect(
     main_entity: MainEntity,
-    render_entity: &RenderEntity,
-    maybe_inherited_visibility: Option<&InheritedVisibility>,
-    maybe_view_visibility: Option<&ViewVisibility>,
-    spawn_count: &SpawnCount,
-    compiled_effect: &CompiledParticleEffect,
-    maybe_properties: Option<Ref<EffectProperties>>,
-    transform: &GlobalTransform,
     q_all_effects: &Query<EffectExtractionQuery>,
     effects: &Assets<EffectAsset>,
-    extracted_effects: &mut ExtractedEffects,
-    reextract_next_frame: &mut MainEntityHashSet,
-) {
-    extracted_effects.effects.remove(&main_entity);
+) -> Option<ExtractedEffect> {
+    let (
+        _,
+        render_entity,
+        maybe_inherited_visibility,
+        maybe_view_visibility,
+        spawn_count,
+        compiled_effect,
+        maybe_properties,
+        transform,
+    ) = q_all_effects.get(main_entity.id()).ok()?;
 
     // Check if shaders are configured
-    let Some(effect_shaders) = compiled_effect.get_configured_shaders() else {
-        reextract_next_frame.insert(main_entity);
-        return;
-    };
+    let effect_shaders = compiled_effect.get_configured_shaders()?;
 
     // Check if hidden, unless always simulated
     if compiled_effect.simulation_condition == SimulationCondition::WhenVisible
@@ -2451,8 +2441,7 @@ fn extract_effect(
             .unwrap_or(true)
         && !maybe_view_visibility.map(|cv| cv.get()).unwrap_or(true)
     {
-        reextract_next_frame.insert(main_entity);
-        return;
+        return None;
     }
 
     // Check if asset is available, otherwise silently ignore
@@ -2461,8 +2450,7 @@ fn extract_effect(
             "EffectAsset not ready; skipping ParticleEffect instance on entity {:?}.",
             main_entity
         );
-        reextract_next_frame.insert(main_entity);
-        return;
+        return None;
     };
 
     // Resolve the render entity of the parent, if any
@@ -2472,8 +2460,7 @@ fn extract_effect(
                 "Failed to resolve render entity of parent with main entity {:?}.",
                 main_parent_entity
             );
-            reextract_next_frame.insert(main_entity);
-            return;
+            return None;
         };
         Some(*render_entity)
     } else {
@@ -2505,37 +2492,32 @@ fn extract_effect(
     let alpha_mode = compiled_effect.alpha_mode;
 
     trace!(
-            "Extracted instance of effect '{}' on entity {:?} (render entity {:?}): texture_layout_count={} texture_count={} layout_flags={:?}",
-            asset.name,
-            main_entity,
-            render_entity.id(),
-            texture_layout.layout.len(),
-            compiled_effect.textures.len(),
-            layout_flags,
-        );
-
-    extracted_effects.effects.insert(
+        "Extracted instance of effect '{}' on entity {:?} (render entity {:?}): texture_layout_count={} texture_count={} layout_flags={:?}",
+        asset.name,
         main_entity,
-        ExtractedEffect {
-            render_entity: *render_entity,
-            main_entity,
-            handle: compiled_effect.asset.clone(),
-            particle_layout: asset.particle_layout().clone(),
-            property_layout,
-            property_data,
-            spawn_count: **spawn_count,
-            prng_seed: compiled_effect.prng_seed,
-            transform: *transform,
-            layout_flags,
-            texture_layout,
-            textures: compiled_effect.textures.clone(),
-            luts: asset.luts.clone(),
-            alpha_mode,
-            effect_shaders: effect_shaders.clone(),
-        },
+        render_entity.id(),
+        texture_layout.layout.len(),
+        compiled_effect.textures.len(),
+        layout_flags,
     );
 
-    extracted_effects.dirty = true;
+    Some(ExtractedEffect {
+        render_entity: *render_entity,
+        main_entity,
+        handle: compiled_effect.asset.clone(),
+        particle_layout: asset.particle_layout().clone(),
+        property_layout,
+        property_data,
+        spawn_count: **spawn_count,
+        prng_seed: compiled_effect.prng_seed,
+        transform: *transform,
+        layout_flags,
+        texture_layout,
+        textures: compiled_effect.textures.clone(),
+        luts: asset.luts.clone(),
+        alpha_mode,
+        effect_shaders: effect_shaders.clone(),
+    })
 }
 
 /// Various GPU limits and aligned sizes computed once and cached.
