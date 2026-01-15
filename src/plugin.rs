@@ -5,6 +5,7 @@ use bevy::core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d};
 use bevy::{
     asset::uuid_handle,
     camera::visibility::VisibilitySystems,
+    pbr::prepare_clusters,
     prelude::*,
     render::{
         extract_component::ExtractComponentPlugin,
@@ -532,6 +533,7 @@ impl Plugin for HanabiPlugin {
                     prepare_gpu_resources
                         .in_set(EffectSystems::PrepareEffectGpuResources)
                         .after(prepare_view_uniforms)
+                        .after(prepare_clusters)
                         .before(prepare_bind_groups),
                     prepare_property_buffers
                         .in_set(EffectSystems::PrepareEffectGpuResources)

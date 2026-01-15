@@ -7,6 +7,9 @@
     quat_conj, quat_mul, quat_rotate, inv_orthonormal_3x4, unpack_compressed_transform,
     get_column
 }
+#import bevy_pbr::mesh_view_types::{
+    ClusterLightIndexLists, ClusterOffsetsAndCounts, ClusterableObjects, Lights
+}
 
 struct Particle {
 {{ATTRIBUTES}}
@@ -30,16 +33,20 @@ struct VertexOutput {
 #endif
 }
 
+// "view" group @0
 @group(0) @binding(0) var<uniform> view: View;
-@group(0) @binding(1) var<uniform> sim_params : SimParams;
 #ifdef TRANSMISSIVE
-@group(0) @binding(2) var view_transmission_texture : texture_2d<f32>;
-@group(0) @binding(3) var view_transmission_sampler : sampler;
+@group(0) @binding(24) var view_transmission_texture : texture_2d<f32>;
+@group(0) @binding(25) var view_transmission_sampler : sampler;
 #endif  // TRANSMISSIVE
+// This is marked as 50 so as not to conflict with the bindings in `mesh_view_bindings`.
+@group(0) @binding(50) var<uniform> sim_params : SimParams;
 
-@group(1) @binding(0) var<storage, read> particle_buffer : ParticleBuffer;
-@group(1) @binding(1) var<storage, read> indirect_buffer : IndirectBuffer;
-@group(1) @binding(2) var<storage, read> spawners : array<Spawner>;
+// "particle" group @1
+// These start at 20 so as not to conflict with the bindings in `mesh_view_bindings`.
+@group(1) @binding(20) var<storage, read> particle_buffer : ParticleBuffer;
+@group(1) @binding(21) var<storage, read> indirect_buffer : IndirectBuffer;
+@group(1) @binding(22) var<storage, read> spawners : array<Spawner>;
 
 // "metadata" group @2
 @group(2) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;

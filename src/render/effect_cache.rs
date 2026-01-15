@@ -27,8 +27,8 @@ use crate::{
     render::{
         calc_hash,
         event::{GpuBatchEffectIndices, GpuChildInfo},
-        GpuEffectMetadata, GpuRenderBatchDescriptor, GpuSpawnerParams, LayoutFlags,
-        StorageType as _, INDIRECT_INDEX_SIZE,
+        GpuEffectMetadata, GpuRenderBatchDescriptor, LayoutFlags, StorageType as _,
+        INDIRECT_INDEX_SIZE,
     },
     ParticleLayout,
 };
@@ -150,8 +150,6 @@ pub struct EffectBuffer {
     indirect_index_buffer: Buffer,
     /// Layout of particles.
     particle_layout: ParticleLayout,
-    /// Layout of the particle@1 bind group for the render pass.
-    render_particles_buffer_layout: BindGroupLayout,
     /// Total buffer capacity, in number of particles.
     capacity: u32,
     /// Used buffer size, in number of particles, either from allocated slices
@@ -255,60 +253,10 @@ impl EffectBuffer {
             indirect_index_buffer.unmap();
         }
 
-        // Create the render layout.
-        let spawner_params_size = GpuSpawnerParams::aligned_size(
-            render_device.limits().min_storage_buffer_offset_alignment,
-        );
-        let entries = [
-            // @group(1) @binding(0) var<storage, read> particle_buffer : ParticleBuffer;
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::VERTEX_FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(particle_layout.min_binding_size()),
-                },
-                count: None,
-            },
-            // @group(1) @binding(1) var<storage, read> indirect_buffer : IndirectBuffer;
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::VERTEX,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(INDIRECT_INDEX_SIZE as u64).unwrap()),
-                },
-                count: None,
-            },
-            // @group(1) @binding(2) var<storage, read> spawners : array<Spawner>;
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::VERTEX,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(spawner_params_size),
-                },
-                count: None,
-            },
-        ];
-        let label = format!("hanabi:bind_group_layout:render:particles@1:vfx{buffer_index}");
-        trace!(
-            "Creating render layout '{}' with {} entries (flags: {:?})",
-            label,
-            entries.len(),
-            layout_flags
-        );
-        let render_particles_buffer_layout =
-            render_device.create_bind_group_layout(&label[..], &entries[..]);
-
         Self {
             particle_buffer,
             indirect_index_buffer,
             particle_layout,
-            render_particles_buffer_layout,
             capacity,
             used_size: 0,
             free_slices: vec![],
@@ -316,10 +264,6 @@ impl EffectBuffer {
             sim_bind_group: None,
             sim_bind_group_key: SimBindGroupKey::INVALID,
         }
-    }
-
-    pub fn render_particles_buffer_layout(&self) -> &BindGroupLayout {
-        &self.render_particles_buffer_layout
     }
 
     #[inline]

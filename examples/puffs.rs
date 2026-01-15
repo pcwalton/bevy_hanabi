@@ -21,19 +21,12 @@ mod utils;
 
 const DEMO_DESC: &str = include_str!("puffs.txt");
 
+static LIGHT_POSITION: Vec3 = vec3(-20.0, 40.0, 5.0);
+
 // A simple custom modifier that lights the meshes with Lambertian lighting.
 // Other lighting models are possible, up to and including PBR.
 #[derive(Clone, Copy, Reflect, Serialize, Deserialize)]
-struct LambertianLightingModifier {
-    // The direction that light is coming from, in particle system space.
-    light_direction: Vec3,
-    // The brightness of the ambient light (which is assumed to be white in
-    // this example).
-    ambient: f32,
-}
-
-// The position of the light in the scene.
-static LIGHT_POSITION: Vec3 = vec3(-20.0, 40.0, 5.0);
+struct LambertianLightingModifier;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let app_exit = DemoApp::new("puffs")
@@ -161,7 +154,7 @@ fn create_effect(mesh: Handle<Mesh>, effects: &mut Assets<EffectAsset>) -> Handl
 
     // Add some nice shading to the particles.
     let render_lambertian =
-        LambertianLightingModifier::new(LIGHT_POSITION.normalize_or_zero(), 0.7);
+        LambertianLightingModifier;
 
     let module = writer.finish();
 
@@ -201,15 +194,6 @@ fn setup_scene_once_loaded(
     }
 }
 
-impl LambertianLightingModifier {
-    fn new(light_direction: Vec3, ambient: f32) -> LambertianLightingModifier {
-        LambertianLightingModifier {
-            light_direction,
-            ambient,
-        }
-    }
-}
-
 // Boilerplate implementation of `Modifier` for our lighting modifier.
 #[cfg_attr(feature = "serde", typetag::serde)]
 impl Modifier for LambertianLightingModifier {
@@ -245,12 +229,24 @@ impl RenderModifier for LambertianLightingModifier {
         // We need the vertex normals to light the mesh.
         context.set_needs_normal();
 
+        context.render_extra += r#"
+#import bevy_pbr::pbr_functions
+#import bevy_pbr::pbr_types
+"#;
+
         // Shade each fragment.
-        context.fragment_code += &format!(
-            "color = vec4(color.rgb * mix({}, 1.0, dot(normal, {})), color.a);",
-            self.ambient.to_wgsl_string(),
-            self.light_direction.to_wgsl_string()
-        );
+        context.fragment_code += "
+        var pbr_input = pbr_types::pbr_input_new();
+        pbr_input.is_orthographic = false;
+        pbr_input.N = normal;
+        pbr_input.world_normal = normal;
+        // FIXME: Should be world space position.
+        pbr_input.world_position = in.position;
+        // FIXME: Should be world space position.
+        pbr_input.V = pbr_functions::calculate_view(in.position, pbr_input.is_orthographic);
+
+        color = pbr_functions::apply_pbr_lighting(pbr_input);
+";
 
         Ok(())
     }

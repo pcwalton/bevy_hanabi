@@ -75,6 +75,7 @@ naga = { version = "26", features = ["wgsl-in"] }
 naga_oil = { version = "0.19", default-features = false, features = ["test_shader"] }
 indexmap = "2"
 smallvec = "1"
+arrayvec = "0.7"
 
 [dependencies.bevy]
 version = "0.17"

@@ -2,13 +2,14 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     marker::PhantomData,
     mem,
-    num::{NonZeroU32, NonZeroU64},
+    num::{NonZero, NonZeroU32, NonZeroU64},
     ops::{Deref, DerefMut, Range},
     path::PathBuf,
     time::Duration,
     vec,
 };
 
+use arrayvec::ArrayVec;
 #[cfg(feature = "2d")]
 use bevy::core_pipeline::core_2d::{Transparent2d, CORE_2D_DEPTH_FORMAT};
 #[cfg(feature = "2d")]
@@ -16,7 +17,20 @@ use bevy::math::FloatOrd;
 use bevy::{
     core_pipeline::core_3d::ViewTransmissionTexture,
     ecs::entity::{EntityHashMap, EntityHashSet},
-    render::{sync_world::MainEntityHashSet, texture::FallbackImage},
+    light::IrradianceVolume,
+    pbr::{
+        EnvironmentMapUniform, EnvironmentMapUniformBuffer, GlobalClusterableObjectMeta,
+        GpuClusterableObjects, GpuLights, LightMeta, LightProbesBuffer, LightProbesUniform,
+        RenderViewLightProbes, ShadowSamplers, ViewClusterBindings,
+        ViewEnvironmentMapUniformOffset, ViewLightProbesUniformOffset, ViewLightsUniformOffset,
+        ViewShadowBindings, MAX_VIEW_LIGHT_PROBES,
+    },
+    render::{
+        globals::{GlobalsBuffer, GlobalsUniform},
+        render_resource::binding_types,
+        sync_world::MainEntityHashSet,
+        texture::FallbackImage,
+    },
 };
 #[cfg(feature = "3d")]
 use bevy::{
@@ -1445,9 +1459,15 @@ impl FromWorld for RenderBatchPipeline {
 #[derive(Resource)]
 pub(crate) struct ParticlesRenderPipeline {
     render_device: RenderDevice,
-    view_layout: BindGroupLayout,
+    view_no_pbr_layout: BindGroupLayout,
+    view_pbr_layout: BindGroupLayout,
     view_transmissive_layout: BindGroupLayout,
     effect_metadata_bind_group_layout: BindGroupLayout,
+    /// Layout of the particle@1 bind group for the render pass, for non-PBR
+    /// views.
+    render_particles_no_pbr_bind_group_layout: BindGroupLayout,
+    /// Layout of the particle@1 bind group for the render pass, for PBR views.
+    render_particles_pbr_bind_group_layout: BindGroupLayout,
     material_layouts: HashMap<TextureLayout, BindGroupLayout>,
 }
 
@@ -1517,81 +1537,16 @@ impl FromWorld for ParticlesRenderPipeline {
     fn from_world(world: &mut World) -> Self {
         let render_device = world.get_resource::<RenderDevice>().unwrap();
 
-        let view_layout = render_device.create_bind_group_layout(
-            "hanabi:bind_group_layout:render:view@0",
-            &[
-                // @group(0) @binding(0) var<uniform> view: View;
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX_FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: Some(ViewUniform::min_size()),
-                    },
-                    count: None,
-                },
-                // @group(0) @binding(1) var<uniform> sim_params : SimParams;
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::VERTEX_FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(GpuSimParams::min_size()),
-                    },
-                    count: None,
-                },
-            ],
-        );
+        let view_layout = create_view_bind_group_layout(render_device, RenderBindGroupType::D2);
+        let view_lights_layout =
+            create_view_bind_group_layout(render_device, RenderBindGroupType::Lights);
+        let view_transmissive_layout =
+            create_view_bind_group_layout(render_device, RenderBindGroupType::Transmissive);
 
-        let view_transmissive_layout = render_device.create_bind_group_layout(
-            "hanabi:bind_group_layout:render:view_transmissive@0",
-            &[
-                // @group(0) @binding(0) var<uniform> view: View;
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX_FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(ViewUniform::min_size()),
-                    },
-                    count: None,
-                },
-                // @group(0) @binding(1) var<uniform> sim_params : SimParams;
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::VERTEX_FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(GpuSimParams::min_size()),
-                    },
-                    count: None,
-                },
-                // @group(0) @binding(2) var view_transmission_texture :
-                // texture_2d<f32>;
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::VERTEX_FRAGMENT,
-                    ty: BindingType::Texture {
-                        sample_type: TextureSampleType::Float { filterable: true },
-                        view_dimension: TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // @group(0) @binding(3) var view_transmission_sampler :
-                // sampler;
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::VERTEX_FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        );
+        let render_particles_no_pbr_bind_group_layout =
+            create_render_particles_bind_group_layout(render_device, /*pbr=*/ false);
+        let render_particles_pbr_bind_group_layout =
+            create_render_particles_bind_group_layout(render_device, /*pbr=*/ true);
 
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
         let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
@@ -1641,7 +1596,10 @@ impl FromWorld for ParticlesRenderPipeline {
 
         Self {
             render_device: render_device.clone(),
-            view_layout,
+            view_no_pbr_layout: view_layout,
+            view_pbr_layout: view_lights_layout,
+            render_particles_no_pbr_bind_group_layout,
+            render_particles_pbr_bind_group_layout,
             view_transmissive_layout,
             effect_metadata_bind_group_layout,
             material_layouts: default(),
@@ -1700,6 +1658,7 @@ pub(crate) struct ParticleRenderPipelineKey {
     /// feature.
     #[cfg(all(feature = "2d", feature = "3d"))]
     pipeline_mode: PipelineMode,
+    view_is_pbr: bool,
     /// MSAA sample count.
     msaa_samples: u32,
     /// Is the camera using an HDR render target?
@@ -1736,6 +1695,7 @@ impl Default for ParticleRenderPipelineKey {
             needs_normal: false,
             needs_particle_fragment: false,
             ribbons: false,
+            view_is_pbr: false,
             emits_raw_positions: false,
             #[cfg(all(feature = "2d", feature = "3d"))]
             pipeline_mode: PipelineMode::Camera3d,
@@ -1751,56 +1711,20 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
     fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
         trace!("Specializing render pipeline for key: {key:?}");
 
-        trace!("Creating layout for bind group particle@1 of render pass");
-        let alignment = self
-            .render_device
-            .limits()
-            .min_storage_buffer_offset_alignment;
-        let spawner_min_binding_size = GpuSpawnerParams::aligned_size(alignment);
-        let entries = [
-            // @group(1) @binding(0) var<storage, read> particle_buffer : ParticleBuffer;
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::VERTEX_FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(key.particle_layout.min_binding_size()),
-                },
-                count: None,
-            },
-            // @group(1) @binding(1) var<storage, read> indirect_buffer : IndirectBuffer;
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::VERTEX,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(INDIRECT_INDEX_SIZE as u64).unwrap()),
-                },
-                count: None,
-            },
-            // @group(1) @binding(2) var<storage, read> spawners : array<Spawner>;
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::VERTEX,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(spawner_min_binding_size),
-                },
-                count: None,
-            },
-        ];
-        let particle_bind_group_layout = self
-            .render_device
-            .create_bind_group_layout("hanabi:bind_group_layout:render:particle@1", &entries[..]);
+        trace!("Fetching layout for bind group particle@1 of render pass");
+        let particle_bind_group_layout = if key.view_is_pbr {
+            self.render_particles_pbr_bind_group_layout.clone()
+        } else {
+            self.render_particles_no_pbr_bind_group_layout.clone()
+        };
 
         let mut layout = vec![];
         if key.alpha_mask == ParticleRenderAlphaMaskPipelineKey::Transmissive {
             layout.push(self.view_transmissive_layout.clone());
+        } else if key.view_is_pbr {
+            layout.push(self.view_pbr_layout.clone());
         } else {
-            layout.push(self.view_layout.clone());
+            layout.push(self.view_no_pbr_layout.clone());
         }
         layout.push(particle_bind_group_layout);
         layout.push(self.effect_metadata_bind_group_layout.clone());
@@ -2557,10 +2481,12 @@ impl GpuLimits {
 pub struct EffectsMeta {
     /// Bind group for the camera view, containing the camera projection and
     /// other uniform values related to the camera.
-    view_bind_group: Option<BindGroup>,
-    /// Maps each camera view render entity to the transmissive view bind group
-    /// for that camera.
-    view_transmissive_bind_groups: EntityHashMap<BindGroup>,
+    ///
+    /// This is only for 2D views.
+    view_2d_bind_group: Option<BindGroup>,
+    /// Maps each camera view render entity to the 3D view bind group for that
+    /// camera.
+    view_pbr_bind_groups: EntityHashMap<BindGroup>,
     /// Bind group #0 of the vfx_indirect shader, for the simulation parameters
     /// like the current time and frame delta time.
     indirect_sim_params_bind_group: Option<BindGroup>,
@@ -2683,8 +2609,8 @@ impl EffectsMeta {
         batch_descriptor_buffer.set_label(Some("hanabi:buffer:batch_descriptor"));
 
         Self {
-            view_bind_group: None,
-            view_transmissive_bind_groups: EntityHashMap::default(),
+            view_2d_bind_group: None,
+            view_pbr_bind_groups: EntityHashMap::default(),
             indirect_sim_params_bind_group: None,
             indirect_metadata_bind_group: None,
             indirect_spawner_bind_group: None,
@@ -3022,9 +2948,11 @@ pub(crate) fn on_remove_cached_effect(
         "=> GPU buffer #{} gone, destroying its bind groups...",
         cached_effect.buffer_index
     );
-    effect_bind_groups
-        .particle_buffers
-        .remove(&cached_effect.buffer_index);
+    for view_effect_bind_groups in effect_bind_groups.view_effect_bind_groups.values_mut() {
+        view_effect_bind_groups
+            .particle_buffers
+            .remove(&cached_effect.buffer_index);
+    }
     effects_meta
         .effect_metadata_buffer
         .remove(dispatch_buffer_indices.effect_metadata_buffer_table_id);
@@ -3569,8 +3497,7 @@ pub(crate) fn prepare_effects(
     mut effect_cache: ResMut<EffectCache>,
     mut effects_meta: ResMut<EffectsMeta>,
     mut effect_bind_groups: ResMut<EffectBindGroups>,
-    extracted_effects: ResMut<ExtractedEffects>,
-    mut prepared_effects: ResMut<PreparedEffects>,
+    (extracted_effects, mut prepared_effects): (ResMut<ExtractedEffects>, ResMut<PreparedEffects>),
     mut property_bind_groups: ResMut<PropertyBindGroups>,
     q_cached_effects: Query<(
         &MainEntity,
@@ -4176,7 +4103,9 @@ pub(crate) fn prepare_effects(
     {
         // All those bind groups use the buffer so need to be re-created
         trace!("*** Effect metadata buffer re-allocated; clearing all bind groups using it.");
-        effect_bind_groups.particle_buffers.clear();
+        for mut view_effect_bind_groups in effect_bind_groups.view_effect_bind_groups.values_mut() {
+            view_effect_bind_groups.particle_buffers.clear();
+        }
         effects_meta.indirect_metadata_bind_group = None;
         effect_bind_groups.init_metadata_bind_groups.clear();
         effect_bind_groups.update_metadata_bind_groups.clear();
@@ -4193,7 +4122,9 @@ pub(crate) fn prepare_effects(
         .write_buffer(render_device, render_queue)
     {
         // All property bind groups use the spawner buffer, which was reallocate
-        effect_bind_groups.particle_buffers.clear();
+        for view_effect_bind_groups in effect_bind_groups.view_effect_bind_groups.values_mut() {
+            view_effect_bind_groups.particle_buffers.clear();
+        }
         effect_bind_groups.init_metadata_bind_groups.clear();
         effect_bind_groups.update_metadata_bind_groups.clear();
         effect_bind_groups.render_metadata_bind_groups.clear();
@@ -4963,9 +4894,7 @@ struct ConsumeEventBuffers<'a> {
 
 #[derive(Default, Resource)]
 pub struct EffectBindGroups {
-    /// Map from buffer index to the bind groups shared among all effects that
-    /// use that buffer.
-    particle_buffers: HashMap<u32, BufferBindGroups>,
+    view_effect_bind_groups: MainEntityHashMap<ViewEffectBindGroups>,
     /// Map of bind groups for image assets used as particle textures.
     images: HashMap<AssetId<Image>, BindGroup>,
     /// Map from buffer index to its metadata bind group (group 3) for the init
@@ -4985,12 +4914,6 @@ pub struct EffectBindGroups {
 }
 
 impl EffectBindGroups {
-    pub fn particle_render(&self, buffer_index: u32) -> Option<&BindGroup> {
-        self.particle_buffers
-            .get(&buffer_index)
-            .map(|bg| &bg.render)
-    }
-
     /// Retrieve the metadata@3 bind group for the init pass, creating it if
     /// needed.
     pub(self) fn get_or_create_init_metadata(
@@ -5405,6 +5328,7 @@ fn emit_sorted_draw<T, F>(
     pipeline_cache: &PipelineCache,
     make_phase_item: F,
     transmissive: bool,
+    view_is_pbr: bool,
     #[cfg(all(feature = "2d", feature = "3d"))] pipeline_mode: PipelineMode,
 ) where
     T: SortedPhaseItem,
@@ -5573,6 +5497,7 @@ fn emit_sorted_draw<T, F>(
                     needs_normal,
                     needs_particle_fragment,
                     ribbons,
+                    view_is_pbr,
                     emits_raw_positions,
                     #[cfg(all(feature = "2d", feature = "3d"))]
                     pipeline_mode,
@@ -5618,6 +5543,7 @@ fn emit_binned_draw<T, F, G>(
     #[cfg(all(feature = "2d", feature = "3d"))] pipeline_mode: PipelineMode,
     alpha_mask: ParticleRenderAlphaMaskPipelineKey,
     change_tick: &mut Tick,
+    view_is_pbr: bool,
 ) where
     T: BinnedPhaseItem,
     F: Fn(CachedRenderPipelineId, &EffectDrawBatch, &ExtractedView) -> T::BatchSetKey,
@@ -5766,6 +5692,7 @@ fn emit_binned_draw<T, F, G>(
                     needs_particle_fragment,
                     ribbons,
                     emits_raw_positions,
+                    view_is_pbr,
                     #[cfg(all(feature = "2d", feature = "3d"))]
                     pipeline_mode,
                     msaa_samples: msaa.samples(),
@@ -5803,8 +5730,7 @@ pub(crate) fn queue_effects(
     mut render_pipeline: ResMut<ParticlesRenderPipeline>,
     mut specialized_render_pipelines: ResMut<SpecializedRenderPipelines<ParticlesRenderPipeline>>,
     pipeline_cache: Res<PipelineCache>,
-    mut effect_bind_groups: ResMut<EffectBindGroups>,
-    sorted_effect_batches: Res<SortedEffects>,
+    (mut effect_bind_groups, sorted_effect_batches): (ResMut<EffectBindGroups>, Res<SortedEffects>),
     effect_draw_batches: Query<(Entity, &mut EffectDrawBatch)>,
     events: Res<EffectAssetEvents>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
@@ -5821,6 +5747,7 @@ pub(crate) fn queue_effects(
         ResMut<ViewBinnedRenderPhases<Opaque3d>>,
         ResMut<ViewBinnedRenderPhases<AlphaMask3d>>,
     ),
+    maybe_light_meta: Option<Res<LightMeta>>,
     mut change_tick: Local<Tick>,
 ) {
     #[cfg(feature = "trace")]
@@ -5892,6 +5819,7 @@ pub(crate) fn queue_effects(
                     indexed: true, // ???
                 },
                 /*transmissive=*/ false,
+                /*world_has_lights=*/ maybe_light_meta.is_some(),
                 #[cfg(feature = "3d")]
                 PipelineMode::Camera2d,
             );
@@ -5936,6 +5864,7 @@ pub(crate) fn queue_effects(
                     indexed: true, // FIXME: This depends on the mesh.
                 },
                 /*transmissive=*/ false,
+                /*world_has_lights=*/ maybe_light_meta.is_some(),
                 #[cfg(feature = "2d")]
                 PipelineMode::Camera3d,
             );
@@ -5975,6 +5904,7 @@ pub(crate) fn queue_effects(
                     indexed: true, // FIXME: This depends on the mesh.
                 },
                 /*transmissive=*/ true,
+                /*world_has_lights=*/ maybe_light_meta.is_some(),
                 #[cfg(feature = "2d")]
                 PipelineMode::Camera3d,
             );
@@ -6018,6 +5948,7 @@ pub(crate) fn queue_effects(
                 PipelineMode::Camera3d,
                 ParticleRenderAlphaMaskPipelineKey::AlphaMask,
                 &mut change_tick,
+                /*world_has_lights=*/ maybe_light_meta.is_some(),
             );
         }
 
@@ -6060,6 +5991,7 @@ pub(crate) fn queue_effects(
                 PipelineMode::Camera3d,
                 ParticleRenderAlphaMaskPipelineKey::Opaque,
                 &mut change_tick,
+                /*world_has_lights=*/ maybe_light_meta.is_some(),
             );
         }
     }
@@ -6071,75 +6003,108 @@ pub(crate) fn queue_effects(
 /// Bevy has updated the [`ViewUniforms`], which need to be referenced to get
 /// access to the current camera view.
 pub(crate) fn prepare_gpu_resources(
-    q_views: Query<(Entity, &ViewUniformOffset, &ViewTransmissionTexture), With<ExtractedView>>,
+    q_pbr_views: Query<
+        (
+            Entity,
+            &ViewShadowBindings,
+            &ViewClusterBindings,
+            Option<&ViewTransmissionTexture>,
+        ),
+        With<ExtractedView>,
+    >,
+    q_pbr_views_debug: Query<
+        (
+            Entity,
+            Has<ViewShadowBindings>,
+            Has<ViewClusterBindings>,
+            Has<RenderViewLightProbes<EnvironmentMapLight>>,
+            Has<RenderViewLightProbes<IrradianceVolume>>,
+            Has<ViewTransmissionTexture>,
+        ),
+        With<ExtractedView>,
+    >,
     mut effects_meta: ResMut<EffectsMeta>,
-    //mut effect_cache: ResMut<EffectCache>,
     mut event_cache: ResMut<EventCache>,
     mut effect_bind_groups: ResMut<EffectBindGroups>,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
+    (render_device, render_queue): (Res<RenderDevice>, Res<RenderQueue>),
     view_uniforms: Res<ViewUniforms>,
     render_pipeline: Res<ParticlesRenderPipeline>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    fallback_images: Res<FallbackImage>,
+    (maybe_light_meta, maybe_clusterable_object_meta, maybe_shadow_samplers): (
+        Option<Res<LightMeta>>,
+        Option<Res<GlobalClusterableObjectMeta>>,
+        Option<Res<ShadowSamplers>>,
+    ),
+    // FIXME: Light probes and environment maps probably aren't present in 2D.
+    (globals, light_probes, environment_maps): (
+        Res<GlobalsBuffer>,
+        Res<LightProbesBuffer>,
+        Res<EnvironmentMapUniformBuffer>,
+    ),
 ) {
     // Get the binding for the ViewUniform, the uniform data structure containing
     // the Camera data for the current view. If not available, we cannot render
     // anything.
-    let (Some(view_buffer), Some(view_binding)) = (
-        view_uniforms.uniforms.buffer(),
-        view_uniforms.uniforms.binding(),
-    ) else {
+    let Some(view_binding) = view_uniforms.uniforms.binding() else {
         return;
     };
 
     // Create the bind group for the camera/view parameters
     // FIXME - Not here!
-    effects_meta.view_bind_group = Some(render_device.create_bind_group(
-        "hanabi:bind_group_camera_view",
-        &render_pipeline.view_layout,
-        &[
-            BindGroupEntry {
-                binding: 0,
-                resource: view_binding,
-            },
-            BindGroupEntry {
-                binding: 1,
-                resource: effects_meta.sim_params_uniforms.binding().unwrap(),
-            },
-        ],
-    ));
+    effects_meta.view_2d_bind_group = create_view_bind_group(
+        &render_device,
+        &gpu_images,
+        &fallback_images,
+        &render_pipeline.view_no_pbr_layout,
+        &view_binding,
+        None,
+        &effects_meta,
+        &globals,
+        &light_probes,
+        &environment_maps,
+        None,
+    );
 
-    // Create the transmissive bind groups for all views.
-    effects_meta.view_transmissive_bind_groups.clear();
-    for (view, view_uniform_offset, view_transmission_texture) in &q_views {
-        let view_transmissive_bind_group = render_device.create_bind_group(
-            "hanabi:bind_group_camera_view_transmissive",
-            &render_pipeline.view_transmissive_layout,
-            &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: view_buffer,
-                        offset: view_uniform_offset.offset as u64,
-                        size: Some(ViewUniform::min_size()),
-                    }),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: effects_meta.sim_params_uniforms.binding().unwrap(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: BindingResource::TextureView(&view_transmission_texture.view),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: BindingResource::Sampler(&view_transmission_texture.sampler),
-                },
-            ],
-        );
-        effects_meta
-            .view_transmissive_bind_groups
-            .insert(view, view_transmissive_bind_group);
+    // Create the bind groups for all 3D views.
+    effects_meta.view_pbr_bind_groups.clear();
+    if let (Some(light_meta), Some(clusterable_object_meta), Some(shadow_samplers)) = (
+        &maybe_light_meta,
+        &maybe_clusterable_object_meta,
+        &maybe_shadow_samplers,
+    ) {
+        for (view, view_shadow_bindings, view_cluster_bindings, maybe_view_transmission_texture) in
+            &q_pbr_views
+        {
+            let layout = if maybe_view_transmission_texture.is_some() {
+                &render_pipeline.view_transmissive_layout
+            } else {
+                &render_pipeline.view_pbr_layout
+            };
+            if let Some(view_bind_group) = create_view_bind_group(
+                &render_device,
+                &gpu_images,
+                &fallback_images,
+                layout,
+                &view_binding,
+                Some((
+                    light_meta,
+                    clusterable_object_meta,
+                    shadow_samplers,
+                    view_shadow_bindings,
+                    view_cluster_bindings,
+                )),
+                &effects_meta,
+                &globals,
+                &light_probes,
+                &environment_maps,
+                maybe_view_transmission_texture,
+            ) {
+                effects_meta
+                    .view_pbr_bind_groups
+                    .insert(view, view_bind_group);
+            }
+        }
     }
 
     // Re-/allocate any GPU buffer if needed
@@ -6149,13 +6114,38 @@ pub(crate) fn prepare_gpu_resources(
 }
 
 pub(crate) fn prepare_bind_groups(
+    q_views: Query<(Entity, &MainEntity), With<ExtractedView>>,
+    q_pbr_views: Query<
+        (
+            &ViewClusterBindings,
+            Option<&RenderViewLightProbes<EnvironmentMapLight>>,
+            Option<&RenderViewLightProbes<IrradianceVolume>>,
+        ),
+        (
+            With<ViewShadowBindings>,
+            With<ViewUniformOffset>,
+            With<ViewLightsUniformOffset>,
+            With<ViewLightProbesUniformOffset>,
+            With<ViewEnvironmentMapUniformOffset>,
+        ),
+    >,
+    q_pbr_views_debug: Query<(
+        Has<ViewClusterBindings>,
+        Has<ViewShadowBindings>,
+        Has<ViewUniformOffset>,
+        Has<ViewLightsUniformOffset>,
+        Has<ViewLightProbesUniformOffset>,
+        Has<ViewEnvironmentMapUniformOffset>,
+    )>,
     mut effects_meta: ResMut<EffectsMeta>,
-    mut effect_cache: ResMut<EffectCache>,
-    mut event_cache: ResMut<EventCache>,
+    (mut effect_cache, mut event_cache, property_cache): (
+        ResMut<EffectCache>,
+        ResMut<EventCache>,
+        Res<PropertyCache>,
+    ),
     mut effect_bind_groups: ResMut<EffectBindGroups>,
     mut property_bind_groups: ResMut<PropertyBindGroups>,
     mut sort_bind_groups: ResMut<SortBindGroups>,
-    property_cache: Res<PropertyCache>,
     sorted_effect_batches: Res<SortedEffects>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     fallback_images: Res<FallbackImage>,
@@ -6173,6 +6163,7 @@ pub(crate) fn prepare_bind_groups(
         Res<RenderBatchPipeline>,
         Res<ParticlesUpdatePipeline>,
     ),
+    clusterable_object_meta: Option<Res<GlobalClusterableObjectMeta>>,
     render_pipeline: ResMut<ParticlesRenderPipeline>,
 ) {
     // We can't simulate nor render anything without at least the spawner buffer
@@ -6506,41 +6497,177 @@ pub(crate) fn prepare_bind_groups(
         // the group, since the update phase runs on an entire group/buffer at once,
         // with all the effect instances in it batched together.
         trace!("effect particle buffer_index=#{}", buffer_index);
-        effect_bind_groups
-            .particle_buffers
-            .entry(buffer_index as u32)
-            .or_insert_with(|| {
-                // Bind group particle@1 for render pass
-                trace!("Creating particle@1 bind group for buffer #{buffer_index} in render pass");
-                let entries = [
-                    // @group(1) @binding(0) var<storage, read> particle_buffer : ParticleBuffer;
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: effect_buffer.max_binding(),
-                    },
-                    // @group(1) @binding(1) var<storage, read> indirect_buffer : IndirectBuffer;
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: effect_buffer.indirect_index_max_binding(),
-                    },
-                    // @group(1) @binding(2) var<storage, read> spawners : array<Spawner>;
-                    BindGroupEntry {
-                        binding: 2,
-                        resource: BindingResource::Buffer(BufferBinding {
-                            buffer: &spawner_buffer,
-                            offset: 0,
-                            size: None,
-                        }),
-                    },
-                ];
-                let render = render_device.create_bind_group(
-                    &format!("hanabi:bind_group:render:particles@1:vfx{buffer_index}")[..],
-                    effect_buffer.render_particles_buffer_layout(),
-                    &entries[..],
-                );
+        for (view_entity, main_view_entity) in &q_views {
+            effect_bind_groups
+                .view_effect_bind_groups
+                .entry(*main_view_entity)
+                .or_default()
+                .particle_buffers
+                .entry(buffer_index as u32)
+                .or_insert_with(|| {
+                    // Bind group particle@1 for render pass
+                    trace!(
+                        "Creating particle@1 bind group for buffer #{buffer_index}, view #{:?} in \
+render pass",
+                        *main_view_entity
+                    );
+                    let mut entries = vec![];
 
-                BufferBindGroups { render }
-            });
+                    // This has to be in the same scope as `entities` for
+                    // lifetime reasons.
+                    let (mut diffuse_texture_views, mut specular_texture_views) = (vec![], vec![]);
+                    let mut environment_map_sampler = None;
+                    let mut irradiance_volume_texture_views = vec![];
+                    let mut irradiance_volume_sampler = None;
+
+                    let bind_group_layout;
+                    match (&clusterable_object_meta, q_pbr_views.get(view_entity)) {
+                        (
+                            Some(clusterable_object_meta),
+                            Ok((
+                                view_cluster_bindings,
+                                maybe_view_environment_maps,
+                                maybe_view_irradiance_volumes,
+                            )),
+                        ) => {
+                            bind_group_layout =
+                                &render_pipeline.render_particles_pbr_bind_group_layout;
+
+                            // See `RenderViewEnvironmentMapBindGroupEntries::get` in
+                            // `bevy_pbr/src/light_probe/environment_map.rs`.
+                            if let Some(view_environment_maps) = maybe_view_environment_maps {
+                                for &cubemap_id in &view_environment_maps.binding_index_to_textures
+                                {
+                                    add_cubemap_texture_view(
+                                        &mut diffuse_texture_views,
+                                        &mut environment_map_sampler,
+                                        cubemap_id.diffuse,
+                                        &gpu_images,
+                                        &fallback_images,
+                                    );
+                                    add_cubemap_texture_view(
+                                        &mut specular_texture_views,
+                                        &mut environment_map_sampler,
+                                        cubemap_id.specular,
+                                        &gpu_images,
+                                        &fallback_images,
+                                    );
+                                }
+                            }
+
+                            if diffuse_texture_views.is_empty() {
+                                diffuse_texture_views.push(&fallback_images.cube.texture_view);
+                            }
+                            if specular_texture_views.is_empty() {
+                                specular_texture_views.push(&fallback_images.cube.texture_view);
+                            }
+
+                            if let Some(view_irradiance_volumes) = maybe_view_irradiance_volumes {
+                                for &cubemap_id in
+                                    &view_irradiance_volumes.binding_index_to_textures
+                                {
+                                    add_cubemap_texture_view(
+                                        &mut irradiance_volume_texture_views,
+                                        &mut irradiance_volume_sampler,
+                                        cubemap_id,
+                                        &gpu_images,
+                                        &fallback_images,
+                                    );
+                                }
+                            }
+
+                            if irradiance_volume_texture_views.is_empty() {
+                                irradiance_volume_texture_views
+                                    .push(&fallback_images.d3.texture_view);
+                            }
+
+                            entries.extend([
+                                // @group(1) @binding(0) var
+                                // diffuse_environment_maps:
+                                // binding_array<texture_cube<f32>, 8u>;
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: BindingResource::TextureViewArray(
+                                        &diffuse_texture_views,
+                                    ),
+                                },
+                                // @group(1) @binding(1) var
+                                // specular_environment_maps:
+                                // binding_array<texture_cube<f32>, 8u>;
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: BindingResource::TextureViewArray(
+                                        &specular_texture_views,
+                                    ),
+                                },
+                                // @group(1) @binding(2) var
+                                // environment_map_sampler: sampler;
+                                BindGroupEntry {
+                                    binding: 2,
+                                    resource: BindingResource::Sampler(
+                                        environment_map_sampler
+                                            .unwrap_or(&fallback_images.cube.sampler),
+                                    ),
+                                },
+                                // @group(1) @binding(3) var
+                                // irradiance_volumes:
+                                // binding_array<texture_3d<f32>, 8u>;
+                                BindGroupEntry {
+                                    binding: 3,
+                                    resource: BindingResource::TextureViewArray(
+                                        &irradiance_volume_texture_views,
+                                    ),
+                                },
+                                // @group(1) @binding(4) var
+                                // irradiance_volume_sampler: sampler;
+                                BindGroupEntry {
+                                    binding: 4,
+                                    resource: BindingResource::Sampler(
+                                        irradiance_volume_sampler
+                                            .unwrap_or(&fallback_images.cube.sampler),
+                                    ),
+                                },
+                            ]);
+                        }
+                        _ => {
+                            bind_group_layout =
+                                &render_pipeline.render_particles_no_pbr_bind_group_layout;
+                        }
+                    }
+
+                    entries.extend([
+                        // @group(1) @binding(20) var<storage, read>
+                        // particle_buffer : ParticleBuffer;
+                        BindGroupEntry {
+                            binding: 20,
+                            resource: effect_buffer.max_binding(),
+                        },
+                        // @group(1) @binding(21) var<storage, read>
+                        // indirect_buffer : IndirectBuffer;
+                        BindGroupEntry {
+                            binding: 21,
+                            resource: effect_buffer.indirect_index_max_binding(),
+                        },
+                        // @group(1) @binding(22) var<storage, read> spawners : array<Spawner>;
+                        BindGroupEntry {
+                            binding: 22,
+                            resource: BindingResource::Buffer(BufferBinding {
+                                buffer: &spawner_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                    ]);
+
+                    let render = render_device.create_bind_group(
+                        &format!("hanabi:bind_group:render:particles@1:vfx{buffer_index}")[..],
+                        bind_group_layout,
+                        &entries[..],
+                    );
+
+                    BufferBindGroups { render }
+                });
+        }
     }
 
     // Create the per-effect bind groups
@@ -6591,7 +6718,6 @@ pub(crate) fn prepare_bind_groups(
             .is_err()
         {
             error!("No particle buffer allocated for effect batch.");
-            continue;
         }
 
         // Bind group @3 of init pass
@@ -6893,7 +7019,13 @@ type DrawEffectsSystemState = SystemState<(
     SRes<PipelineCache>,
     SRes<RenderAssets<RenderMesh>>,
     SRes<MeshAllocator>,
-    SQuery<Read<ViewUniformOffset>>,
+    SQuery<(
+        Read<MainEntity>,
+        Read<ViewUniformOffset>,
+        Option<Read<ViewLightsUniformOffset>>,
+        Option<Read<ViewLightProbesUniformOffset>>,
+        Option<Read<ViewEnvironmentMapUniformOffset>>,
+    )>,
     SRes<SortedEffects>,
     SQuery<Read<EffectDrawBatch>>,
 )>;
@@ -6935,7 +7067,13 @@ fn draw<'w>(
         sorted_effect_batches,
         effect_draw_batches,
     ) = params.get(world);
-    let view_uniform = views.get(view).unwrap();
+    let (
+        main_view_entity,
+        view_uniform_offset,
+        maybe_view_lights_uniform_offset,
+        maybe_view_light_probes_uniform_offset,
+        maybe_view_environment_map_uniform_offset,
+    ) = views.get(view).unwrap();
     let effects_meta = effects_meta.into_inner();
     let effect_bind_groups = effect_bind_groups.into_inner();
     let meshes = meshes.into_inner();
@@ -6944,6 +7082,13 @@ fn draw<'w>(
     let effect_instance = sorted_effect_batches
         .get(effect_draw_batch.representative_effect_instance_index)
         .unwrap();
+
+    let Some(view_effect_bind_groups) = effect_bind_groups
+        .view_effect_bind_groups
+        .get(main_view_entity)
+    else {
+        return;
+    };
 
     let storage_alignment = world
         .resource::<RenderDevice>()
@@ -6973,26 +7118,42 @@ fn draw<'w>(
     pass.set_vertex_buffer(0, vertex_buffer_slice.buffer.slice(..));
 
     // View properties (camera matrix, etc.)
+    let mut view_dynamic_offsets: ArrayVec<u32, 4> = ArrayVec::new();
+    view_dynamic_offsets.push(view_uniform_offset.offset);
     if effect_instance
         .layout_flags
         .contains(LayoutFlags::TRANSMISSIVE)
+        || maybe_view_lights_uniform_offset.is_some()
     {
-        let Some(view_bind_group) = effects_meta.view_transmissive_bind_groups.get(&view) else {
-            error!("No transmissive bind group available for view {:?}", view);
+        let Some(view_bind_group) = effects_meta.view_pbr_bind_groups.get(&view) else {
+            error!("No 3D bind group available for view {:?}", view);
             return;
         };
-        pass.set_bind_group(0, view_bind_group, &[]);
+        if let (
+            Some(view_lights_uniform_offset),
+            Some(view_light_probes_uniform_offset),
+            Some(view_environment_map_uniform_offset),
+        ) = (
+            maybe_view_lights_uniform_offset,
+            maybe_view_light_probes_uniform_offset,
+            maybe_view_environment_map_uniform_offset,
+        ) {
+            view_dynamic_offsets.push(view_lights_uniform_offset.offset);
+            view_dynamic_offsets.push(**view_light_probes_uniform_offset);
+            view_dynamic_offsets.push(**view_environment_map_uniform_offset);
+        }
+        pass.set_bind_group(0, view_bind_group, &view_dynamic_offsets);
     } else {
-        let view_bind_group = effects_meta.view_bind_group.as_ref().unwrap();
-        pass.set_bind_group(0, view_bind_group, &[view_uniform.offset]);
-    };
+        let view_bind_group = effects_meta.view_2d_bind_group.as_ref().unwrap();
+        pass.set_bind_group(0, view_bind_group, &view_dynamic_offsets);
+    }
 
     // Particles buffer
     let spawner_buffer_aligned = effects_meta.spawner_buffer.aligned_size();
     assert!(spawner_buffer_aligned >= GpuSpawnerParams::min_size().get() as usize);
     pass.set_bind_group(
         1,
-        effect_bind_groups
+        view_effect_bind_groups
             .particle_render(effect_instance.buffer_index)
             .unwrap(),
         &[],
@@ -8240,6 +8401,526 @@ impl From<LayoutFlags> for ParticleRenderAlphaMaskPipelineKey {
 #[derive(Default, Resource, Debug)]
 pub(crate) struct PreparedEffects {
     effects: MainEntityHashMap<InstanceInput>,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum RenderBindGroupType {
+    D2,
+    Lights,
+    Transmissive,
+}
+
+fn create_view_bind_group_layout(
+    render_device: &RenderDevice,
+    bind_group_type: RenderBindGroupType,
+) -> BindGroupLayout {
+    let mut entries = vec![
+        // @group(0) @binding(0) var<uniform> view: View;
+        BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::VERTEX_FRAGMENT,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: true,
+                min_binding_size: Some(ViewUniform::min_size()),
+            },
+            count: None,
+        },
+        // @group(0) @binding(50) var<uniform> sim_params : SimParams;
+        BindGroupLayoutEntry {
+            binding: 50,
+            visibility: ShaderStages::VERTEX_FRAGMENT,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: Some(GpuSimParams::min_size()),
+            },
+            count: None,
+        },
+    ];
+
+    // See `layout_entries` in `bevy_pbr/src/render/mesh_view_bindings.rs`.
+    if matches!(
+        bind_group_type,
+        RenderBindGroupType::Lights | RenderBindGroupType::Transmissive
+    ) {
+        let buffer_binding_type = BufferBindingType::Storage { read_only: true };
+        entries.extend([
+            // @group(0) @binding(1) var<uniform> lights: Lights;
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: Some(GpuLights::min_size()),
+                },
+                count: None,
+            },
+            // @group(0) @binding(2) var point_shadow_textures: texture_depth_cube_array;
+            binding_types::texture_cube_array(TextureSampleType::Depth)
+                .build(2, ShaderStages::VERTEX_FRAGMENT),
+            // @group(0) @binding(3) var point_shadow_textures_comparison_sampler: sampler_comparison;
+            binding_types::sampler(SamplerBindingType::Comparison)
+                .build(3, ShaderStages::VERTEX_FRAGMENT),
+            // @group(0) @binding(5) var directional_shadow_textures: texture_depth_2d_array;
+            binding_types::texture_2d_array(TextureSampleType::Depth)
+                .build(5, ShaderStages::VERTEX_FRAGMENT),
+            // @group(0) @binding(6) var directional_shadow_textures_comparison_sampler: sampler_comparison;
+            binding_types::sampler(SamplerBindingType::Comparison)
+                .build(6, ShaderStages::VERTEX_FRAGMENT),
+            // ClusterableObjects;
+            BindGroupLayoutEntry {
+                binding: 8,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: buffer_binding_type,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(GpuClusterableObjects::min_size(buffer_binding_type)),
+                },
+                count: None,
+            },
+            // @group(0) @binding(9) var<storage>
+            // clusterable_object_index_lists: ClusterLightIndexLists;
+            BindGroupLayoutEntry {
+                binding: 9,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: buffer_binding_type,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        ViewClusterBindings::min_size_clusterable_object_index_lists(
+                            buffer_binding_type,
+                        ),
+                    ),
+                },
+                count: None,
+            },
+            // @group(0) @binding(10) var<storage> cluster_offsets_and_counts:
+            // ClusterOffsetsAndCounts;
+            BindGroupLayoutEntry {
+                binding: 10,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: buffer_binding_type,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        ViewClusterBindings::min_size_cluster_offsets_and_counts(
+                            buffer_binding_type,
+                        ),
+                    ),
+                },
+                count: None,
+            },
+            // @group(0) @binding(11) var<uniform> globals: Globals;
+            BindGroupLayoutEntry {
+                binding: 11,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(GlobalsUniform::min_size()),
+                },
+                count: None,
+            },
+            // @group(0) @binding(13) var<uniform> light_probes: types::LightProbes;
+            BindGroupLayoutEntry {
+                binding: 13,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: Some(LightProbesUniform::min_size()),
+                },
+                count: None,
+            },
+            // @group(0) @binding(17) var<uniform> environment_map_uniform:
+            // types::EnvironmentMapUniform;
+            BindGroupLayoutEntry {
+                binding: 17,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: Some(EnvironmentMapUniform::min_size()),
+                },
+                count: None,
+            },
+        ])
+    }
+
+    if bind_group_type == RenderBindGroupType::Transmissive {
+        entries.extend([
+            // @group(0) @binding(24) var view_transmission_texture :
+            // texture_2d<f32>;
+            BindGroupLayoutEntry {
+                binding: 24,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // @group(0) @binding(25) var view_transmission_sampler :
+            // sampler;
+            BindGroupLayoutEntry {
+                binding: 25,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ]);
+    }
+
+    let label = format!(
+        "hanabi:bind_group_layout:render:view{}@0",
+        match bind_group_type {
+            RenderBindGroupType::D2 => "",
+            RenderBindGroupType::Lights => "_lights",
+            RenderBindGroupType::Transmissive => "_transmissive",
+        }
+    );
+
+    render_device.create_bind_group_layout(&*label, &entries)
+}
+
+// See `prepare_mesh_view_bind_groups` in
+// `bevy_pbr/src/render/mesh_view_bindings.rs`.
+fn create_view_bind_group(
+    render_device: &RenderDevice,
+    images: &RenderAssets<GpuImage>,
+    fallback_images: &FallbackImage,
+    bind_group_layout: &BindGroupLayout,
+    view_binding: &BindingResource,
+    maybe_pbr_view_data: Option<(
+        &LightMeta,
+        &GlobalClusterableObjectMeta,
+        &ShadowSamplers,
+        &ViewShadowBindings,
+        &ViewClusterBindings,
+    )>,
+    effects_meta: &EffectsMeta,
+    globals: &GlobalsBuffer,
+    light_probes: &LightProbesBuffer,
+    environment_map_uniform_buffer: &EnvironmentMapUniformBuffer,
+    maybe_view_transmission_texture: Option<&ViewTransmissionTexture>,
+) -> Option<BindGroup> {
+    let globals_binding = globals.buffer.binding()?;
+    let light_probes_binding = light_probes.binding()?;
+    let environment_map_uniform_binding = environment_map_uniform_buffer.binding()?;
+
+    let mut entries = vec![];
+
+    let BindingResource::Buffer(BufferBinding {
+        buffer: view_buffer,
+        ..
+    }) = *view_binding
+    else {
+        error!("View binding isn't a buffer?");
+        return None;
+    };
+
+    entries.push(BindGroupEntry {
+        binding: 0,
+        resource: BindingResource::Buffer(BufferBinding {
+            buffer: view_buffer,
+            offset: 0,
+            size: None,
+        }),
+    });
+
+    let mut entries = vec![
+        BindGroupEntry {
+            binding: 0,
+            resource: (*view_binding).clone(),
+        },
+        BindGroupEntry {
+            binding: 50,
+            resource: effects_meta.sim_params_uniforms.binding().unwrap(),
+        },
+    ];
+
+    if let Some((
+        light_meta,
+        clusterable_object_meta,
+        shadow_samplers,
+        view_shadow_bindings,
+        view_cluster_bindings,
+    )) = maybe_pbr_view_data
+    {
+        if let (
+            Some(view_gpu_lights_binding),
+            Some(clusterable_objects_binding),
+            Some(clusterable_object_index_lists_binding),
+            Some(cluster_offsets_and_counts_binding),
+        ) = (
+            light_meta.view_gpu_lights.binding(),
+            clusterable_object_meta.gpu_clusterable_objects.binding(),
+            view_cluster_bindings.clusterable_object_index_lists_binding(),
+            view_cluster_bindings.offsets_and_counts_binding(),
+        ) {
+            entries.extend([
+                // @group(0) @binding(1) var<uniform> lights: Lights;
+                BindGroupEntry {
+                    binding: 1,
+                    resource: view_gpu_lights_binding,
+                },
+                // @group(0) @binding(2) var point_shadow_textures:
+                // texture_depth_cube_array;
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(
+                        &view_shadow_bindings.point_light_depth_texture_view,
+                    ),
+                },
+                // @group(0) @binding(3) var
+                // point_shadow_textures_comparison_sampler: sampler_comparison;
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Sampler(
+                        &shadow_samplers.point_light_comparison_sampler,
+                    ),
+                },
+                // @group(0) @binding(5) var directional_shadow_textures:
+                // texture_depth_2d_array;
+                BindGroupEntry {
+                    binding: 5,
+                    resource: BindingResource::TextureView(
+                        &view_shadow_bindings.directional_light_depth_texture_view,
+                    ),
+                },
+                // @group(0) @binding(6) var
+                // directional_shadow_textures_comparison_sampler:
+                // sampler_comparison;
+                BindGroupEntry {
+                    binding: 6,
+                    resource: BindingResource::Sampler(
+                        &shadow_samplers.directional_light_comparison_sampler,
+                    ),
+                },
+                // @group(0) @binding(8) var<storage> clusterable_objects:
+                // ClusterableObjects;
+                BindGroupEntry {
+                    binding: 8,
+                    resource: clusterable_objects_binding,
+                },
+                // @group(0) @binding(9) var<storage>
+                // clusterable_object_index_lists: ClusterLightIndexLists;
+                BindGroupEntry {
+                    binding: 9,
+                    resource: clusterable_object_index_lists_binding,
+                },
+                // @group(0) @binding(10) var<storage>
+                // cluster_offsets_and_counts: ClusterOffsetsAndCounts;
+                BindGroupEntry {
+                    binding: 10,
+                    resource: cluster_offsets_and_counts_binding,
+                },
+                // @group(0) @binding(11) var<uniform> globals: Globals;
+                BindGroupEntry {
+                    binding: 11,
+                    resource: globals_binding,
+                },
+                // @group(0) @binding(13) var<uniform> light_probes:
+                // types::LightProbes;
+                BindGroupEntry {
+                    binding: 13,
+                    resource: light_probes_binding,
+                },
+                // @group(0) @binding(17) var<uniform> environment_map_uniform:
+                // types::EnvironmentMapUniform;
+                BindGroupEntry {
+                    binding: 17,
+                    resource: environment_map_uniform_binding,
+                },
+            ]);
+        } else {
+            warn!("Clustered light objects not found for view");
+        }
+    }
+
+    if let Some(view_transmission_texture) = maybe_view_transmission_texture {
+        entries.extend([
+            // @group(0) @binding(24) var view_transmission_texture :
+            // texture_2d<f32>;
+            BindGroupEntry {
+                binding: 24,
+                resource: BindingResource::TextureView(&view_transmission_texture.view),
+            },
+            // @group(0) @binding(25) var view_transmission_sampler :
+            // sampler;
+            BindGroupEntry {
+                binding: 25,
+                resource: BindingResource::Sampler(&view_transmission_texture.sampler),
+            },
+        ]);
+    }
+
+    let label = format!(
+        "hanabi:bind_group_camera_view{}",
+        if maybe_view_transmission_texture.is_some() {
+            "_transmissive"
+        } else if maybe_pbr_view_data.is_some() {
+            "_lit"
+        } else {
+            ""
+        }
+    );
+
+    Some(render_device.create_bind_group(&*label, bind_group_layout, &entries))
+}
+
+fn create_render_particles_bind_group_layout(
+    render_device: &RenderDevice,
+    pbr: bool,
+) -> BindGroupLayout {
+    let spawner_params_size =
+        GpuSpawnerParams::aligned_size(render_device.limits().min_storage_buffer_offset_alignment);
+
+    let mut entries = vec![
+        // @group(1) @binding(20) var<storage, read> particle_buffer : ParticleBuffer;
+        BindGroupLayoutEntry {
+            binding: 20,
+            visibility: ShaderStages::VERTEX_FRAGMENT,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        // @group(1) @binding(21) var<storage, read> indirect_buffer : IndirectBuffer;
+        BindGroupLayoutEntry {
+            binding: 21,
+            visibility: ShaderStages::VERTEX,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: Some(NonZeroU64::new(INDIRECT_INDEX_SIZE as u64).unwrap()),
+            },
+            count: None,
+        },
+        // @group(1) @binding(22) var<storage, read> spawners : array<Spawner>;
+        BindGroupLayoutEntry {
+            binding: 22,
+            visibility: ShaderStages::VERTEX,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: Some(spawner_params_size),
+            },
+            count: None,
+        },
+    ];
+
+    if pbr {
+        entries.extend([
+            // @group(1) @binding(0) var diffuse_environment_maps:
+            // binding_array<texture_cube<f32>, 8u>;
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::Cube,
+                    multisampled: false,
+                },
+                count: NonZero::<u32>::new(MAX_VIEW_LIGHT_PROBES as _),
+            },
+            // @group(1) @binding(1) var specular_environment_maps:
+            // binding_array<texture_cube<f32>, 8u>;
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::Cube,
+                    multisampled: false,
+                },
+                count: NonZero::<u32>::new(MAX_VIEW_LIGHT_PROBES as _),
+            },
+            // @group(1) @binding(2) var environment_map_sampler: sampler;
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+            // @group(1) @binding(3) var irradiance_volumes:
+            // binding_array<texture_3d<f32>, 8u>;
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: NonZero::<u32>::new(MAX_VIEW_LIGHT_PROBES as _),
+            },
+            // @group(1) @binding(4) var irradiance_volume_sampler: sampler;
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ])
+    }
+
+    let label = format!(
+        "hanabi:bind_group_layout:render:particles@1:{}_vfx",
+        if pbr { "pbr" } else { "no_pbr" }
+    );
+
+    render_device.create_bind_group_layout(&*label, &entries)
+}
+
+/// Adds a diffuse or specular texture view to the `texture_views` list, and
+/// populates `sampler` if this is the first such view.
+///
+/// This is a bit of a misnomer because it populates 3D textures as well for
+/// irradiance volumes, but we follow Bevy here.
+///
+/// Taken from `bevy_pbr/src/light_probe/mod.rs`.
+fn add_cubemap_texture_view<'a>(
+    texture_views: &mut Vec<&'a <TextureView as Deref>::Target>,
+    sampler: &mut Option<&'a Sampler>,
+    image_id: AssetId<Image>,
+    images: &'a RenderAssets<GpuImage>,
+    fallback_image: &'a FallbackImage,
+) {
+    match images.get(image_id) {
+        None => {
+            // Use the fallback image if the cubemap isn't loaded yet.
+            texture_views.push(&*fallback_image.cube.texture_view);
+        }
+        Some(image) => {
+            // If this is the first texture view, populate `sampler`.
+            if sampler.is_none() {
+                *sampler = Some(&image.sampler);
+            }
+
+            texture_views.push(&*image.texture_view);
+        }
+    }
+}
+
+#[derive(Default)]
+struct ViewEffectBindGroups {
+    /// Map from buffer index to the bind groups shared among all effects that
+    /// use that buffer.
+    particle_buffers: HashMap<u32, BufferBindGroups>,
+}
+
+impl ViewEffectBindGroups {
+    pub fn particle_render(&self, buffer_index: u32) -> Option<&BindGroup> {
+        self.particle_buffers
+            .get(&buffer_index)
+            .map(|bg| &bg.render)
+    }
 }
 
 #[cfg(test)]
