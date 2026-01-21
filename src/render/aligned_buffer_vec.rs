@@ -136,7 +136,7 @@ impl<T: Pod + ShaderSize> AlignedBufferVec<T> {
     /// Get a binding for the entire buffer.
     #[inline]
     #[allow(dead_code)]
-    pub fn binding(&self) -> Option<BindingResource> {
+    pub fn binding(&self) -> Option<BindingResource<'_>> {
         // FIXME - Return a Buffer wrapper first, which can be unwrapped, then from that
         // wrapper implement all the xxx_binding() helpers. That avoids a bunch of "if
         // let Some()" everywhere when we know the buffer is valid. The only reason the
@@ -160,7 +160,7 @@ impl<T: Pod + ShaderSize> AlignedBufferVec<T> {
     /// Panics if `count` is zero.
     #[inline]
     #[allow(dead_code)]
-    pub fn range_binding(&self, offset: u32, count: u32) -> Option<BindingResource> {
+    pub fn range_binding(&'_ self, offset: u32, count: u32) -> Option<BindingResource<'_>> {
         assert!(count > 0);
         let buffer = self.buffer()?;
         let offset = self.aligned_size as u64 * offset as u64;
@@ -392,7 +392,7 @@ impl HybridAlignedBufferVec {
     /// Get a binding for the entire buffer.
     #[allow(dead_code)]
     #[inline]
-    pub fn max_binding(&self) -> Option<BindingResource> {
+    pub fn max_binding(&'_ self) -> Option<BindingResource<'_>> {
         // FIXME - Return a Buffer wrapper first, which can be unwrapped, then from that
         // wrapper implement all the xxx_binding() helpers. That avoids a bunch of "if
         // let Some()" everywhere when we know the buffer is valid. The only reason the
@@ -414,7 +414,7 @@ impl HybridAlignedBufferVec {
     /// Panics if `size` is zero.
     #[allow(dead_code)]
     #[inline]
-    pub fn lead_binding(&self, size: u32) -> Option<BindingResource> {
+    pub fn lead_binding(&'_ self, size: u32) -> Option<BindingResource<'_>> {
         let buffer = self.buffer()?;
         let size = NonZeroU64::new(size as u64).unwrap();
         Some(BindingResource::Buffer(BufferBinding {
@@ -436,7 +436,7 @@ impl HybridAlignedBufferVec {
     /// Panics if `size` is zero.
     #[allow(dead_code)]
     #[inline]
-    pub fn range_binding(&self, offset: u32, size: u32) -> Option<BindingResource> {
+    pub fn range_binding(&'_ self, offset: u32, size: u32) -> Option<BindingResource<'_>> {
         assert!(offset as usize % self.item_align == 0);
         let buffer = self.buffer()?;
         let size = NonZeroU64::new(size as u64).unwrap();
@@ -1177,7 +1177,10 @@ mod gpu_tests {
         queue.on_submitted_work_done(move || {
             tx.send(()).unwrap();
         });
-        let _ = device.poll(wgpu::PollType::Wait);
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         let _ = futures::executor::block_on(rx);
         println!("Buffer written");
 
@@ -1189,7 +1192,10 @@ mod gpu_tests {
         buffer.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
-        let _ = device.poll(wgpu::PollType::Wait);
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         let _result = futures::executor::block_on(rx);
         let view = buffer.get_mapped_range();
 

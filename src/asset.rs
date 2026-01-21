@@ -659,7 +659,7 @@ impl EffectAsset {
 ///
 /// Effet assets take the `.effect` extension.
 #[cfg(feature = "serde")]
-#[derive(Default)]
+#[derive(Default, Reflect)]
 pub struct EffectAssetLoader;
 
 /// Error for the [`EffectAssetLoader`] loading an [`EffectAsset`].
@@ -1008,7 +1008,6 @@ mod tests {
         };
         assert_eq!(blend_state, AlphaMode::Multiply.into());
 
-        let expr = Module::default().lit(0.5);
-        assert_eq!(BlendState::ALPHA_BLENDING, AlphaMode::Mask(expr).into());
+        assert_eq!(BlendState::ALPHA_BLENDING, AlphaMode::Mask(0.5).into());
     }
 }

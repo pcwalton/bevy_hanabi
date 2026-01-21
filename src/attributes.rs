@@ -851,7 +851,7 @@ impl Struct for Attribute {
         2
     }
 
-    fn iter_fields(&self) -> FieldIter {
+    fn iter_fields(&'_ self) -> FieldIter<'_> {
         FieldIter::new(self)
     }
 }
@@ -914,12 +914,12 @@ impl PartialReflect for Attribute {
     }
 
     #[inline]
-    fn reflect_ref(&self) -> ReflectRef {
+    fn reflect_ref(&'_ self) -> ReflectRef<'_> {
         ReflectRef::Struct(self)
     }
 
     #[inline]
-    fn reflect_mut(&mut self) -> ReflectMut {
+    fn reflect_mut(&'_ mut self) -> ReflectMut<'_> {
         ReflectMut::Struct(self)
     }
 

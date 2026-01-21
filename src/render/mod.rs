@@ -45,7 +45,7 @@ use bevy::{
 };
 use bevy::{
     ecs::{
-        component::Tick,
+        change_detection::Tick,
         prelude::*,
         system::{lifetimeless::*, SystemParam, SystemState},
     },
@@ -144,7 +144,7 @@ pub(crate) struct BufferBindingSource {
 
 impl BufferBindingSource {
     /// Get a binding over the source data.
-    pub fn binding(&self) -> BindingResource {
+    pub fn binding(&'_ self) -> BindingResource<'_> {
         BindingResource::Buffer(BufferBinding {
             buffer: &self.buffer,
             offset: self.offset as u64 * 4,
@@ -527,13 +527,13 @@ struct GpuNonIndexedIndirectDrawCommand {
 #[derive(Resource)]
 pub(crate) struct DispatchIndirectPipeline {
     /// Layout of bind group sim_params@0.
-    sim_params_bind_group_layout: BindGroupLayout,
+    sim_params_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     /// Layout of bind group effect_metadata@1.
-    effect_metadata_bind_group_layout: BindGroupLayout,
+    effect_metadata_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     /// Layout of bind group spawner@2.
-    spawner_bind_group_layout: BindGroupLayout,
+    spawner_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     /// Layout of bind group child_infos@3.
-    child_infos_bind_group_layout: BindGroupLayout,
+    child_infos_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     /// Shader when no GPU events are used (no bind group @3).
     indirect_shader_noevent: Handle<Shader>,
     /// Shader when GPU events are used (bind group @3 present).
@@ -560,7 +560,7 @@ impl FromWorld for DispatchIndirectPipeline {
 
         // @group(0) @binding(0) var<uniform> sim_params : SimParams;
         trace!("GpuSimParams: min_size={}", GpuSimParams::min_size());
-        let sim_params_bind_group_layout = render_device.create_bind_group_layout(
+        let sim_params_bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:dispatch_indirect:sim_params",
             &[BindGroupLayoutEntry {
                 binding: 0,
@@ -579,7 +579,7 @@ impl FromWorld for DispatchIndirectPipeline {
             GpuEffectMetadata::min_size(),
             render_effect_metadata_size,
         );
-        let effect_metadata_bind_group_layout = render_device.create_bind_group_layout(
+        let effect_metadata_bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:dispatch_indirect:effect_metadata@1",
             &[
                 // @group(0) @binding(0) var<storage, read_write> effect_metadata_buffer :
@@ -613,7 +613,7 @@ impl FromWorld for DispatchIndirectPipeline {
 
         // @group(2) @binding(0) var<storage, read_write> spawner_buffer :
         // array<Spawner>;
-        let spawner_bind_group_layout = render_device.create_bind_group_layout(
+        let spawner_bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:dispatch_indirect:spawner@2",
             &[BindGroupLayoutEntry {
                 binding: 0,
@@ -629,7 +629,7 @@ impl FromWorld for DispatchIndirectPipeline {
 
         // @group(3) @binding(0) var<storage, read_write> child_info_buffer :
         // ChildInfoBuffer;
-        let child_infos_bind_group_layout = render_device.create_bind_group_layout(
+        let child_infos_bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:dispatch_indirect:child_infos",
             &[BindGroupLayoutEntry {
                 binding: 0,
@@ -644,10 +644,10 @@ impl FromWorld for DispatchIndirectPipeline {
         );
 
         Self {
-            sim_params_bind_group_layout,
-            effect_metadata_bind_group_layout,
-            spawner_bind_group_layout,
-            child_infos_bind_group_layout,
+            sim_params_bind_group_layout_descriptor,
+            effect_metadata_bind_group_layout_descriptor,
+            spawner_bind_group_layout_descriptor,
+            child_infos_bind_group_layout_descriptor,
             indirect_shader_noevent,
             indirect_shader_events,
         }
@@ -679,11 +679,11 @@ impl SpecializedComputePipeline for DispatchIndirectPipeline {
         }
 
         let mut layout = Vec::with_capacity(4);
-        layout.push(self.sim_params_bind_group_layout.clone());
-        layout.push(self.effect_metadata_bind_group_layout.clone());
-        layout.push(self.spawner_bind_group_layout.clone());
+        layout.push(self.sim_params_bind_group_layout_descriptor.clone());
+        layout.push(self.effect_metadata_bind_group_layout_descriptor.clone());
+        layout.push(self.spawner_bind_group_layout_descriptor.clone());
         if key.has_events {
-            layout.push(self.child_infos_bind_group_layout.clone());
+            layout.push(self.child_infos_bind_group_layout_descriptor.clone());
         }
 
         let label = format!(
@@ -713,7 +713,7 @@ impl SpecializedComputePipeline for DispatchIndirectPipeline {
 
 #[derive(Resource)]
 pub(crate) struct IndirectBatchPipeline {
-    bind_group_layout: BindGroupLayout,
+    bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     shader: Handle<Shader>,
 }
 
@@ -795,13 +795,13 @@ impl FromWorld for IndirectBatchPipeline {
             },
         ];
 
-        let bind_group_layout = render_device.create_bind_group_layout(
+        let bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:dispatch_indirect",
             &bind_group_layout_entries,
         );
 
         Self {
-            bind_group_layout,
+            bind_group_layout_descriptor,
             shader,
         }
     }
@@ -809,7 +809,7 @@ impl FromWorld for IndirectBatchPipeline {
 
 #[derive(Resource)]
 pub(crate) struct InitIndirectBatchPipeline {
-    bind_group_layout: BindGroupLayout,
+    bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     shader: Handle<Shader>,
 }
 
@@ -915,13 +915,13 @@ impl FromWorld for InitIndirectBatchPipeline {
             },
         ];
 
-        let bind_group_layout = render_device.create_bind_group_layout(
+        let bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:init_indirect_batch",
             &bind_group_layout_entries,
         );
 
         InitIndirectBatchPipeline {
-            bind_group_layout,
+            bind_group_layout_descriptor,
             shader,
         }
     }
@@ -938,7 +938,7 @@ impl SpecializedComputePipeline for InitIndirectBatchPipeline {
 
         ComputePipelineDescriptor {
             label: Some("hanabi:compute_pipeline:init_indirect_batch".into()),
-            layout: vec![self.bind_group_layout.clone()],
+            layout: vec![self.bind_group_layout_descriptor.clone()],
             shader: self.shader.clone(),
             shader_defs: vec![],
             entry_point: Some("main".into()),
@@ -959,7 +959,7 @@ impl SpecializedComputePipeline for IndirectBatchPipeline {
 
         ComputePipelineDescriptor {
             label: Some("hanabi:compute_pipeline:indirect_batch".into()),
-            layout: vec![self.bind_group_layout.clone()],
+            layout: vec![self.bind_group_layout_descriptor.clone()],
             shader: self.shader.clone(),
             shader_defs: vec![],
             entry_point: Some("main".into()),
@@ -980,7 +980,7 @@ impl SpecializedComputePipeline for RenderBatchPipeline {
 
         ComputePipelineDescriptor {
             label: Some("hanabi:compute_pipeline:render_batch".into()),
-            layout: vec![self.bind_group_layout.clone()],
+            layout: vec![self.bind_group_layout_descriptor.clone()],
             shader: self.shader.clone(),
             shader_defs: vec![],
             entry_point: Some("main".into()),
@@ -1059,23 +1059,21 @@ impl GpuBufferOperations {
 
 #[derive(Resource)]
 pub(crate) struct ParticlesInitPipeline {
-    sim_params_layout: BindGroupLayout,
+    sim_params_layout_descriptor: BindGroupLayoutDescriptor,
 
     // Temporary values passed to specialize()
     // https://github.com/bevyengine/bevy/issues/17132
     /// Layout of the particle@1 bind group this pipeline was specialized with.
-    temp_particle_bind_group_layout: Option<BindGroupLayout>,
+    temp_particle_bind_group_layout_descriptor: Option<BindGroupLayoutDescriptor>,
     /// Layout of the spawner@2 bind group this pipeline was specialized with.
-    temp_spawner_bind_group_layout: Option<BindGroupLayout>,
+    temp_spawner_bind_group_layout_descriptor: Option<BindGroupLayoutDescriptor>,
     /// Layout of the metadata@3 bind group this pipeline was specialized with.
-    temp_metadata_bind_group_layout: Option<BindGroupLayout>,
+    temp_metadata_bind_group_layout_descriptor: Option<BindGroupLayoutDescriptor>,
 }
 
-impl FromWorld for ParticlesInitPipeline {
-    fn from_world(world: &mut World) -> Self {
-        let render_device = world.get_resource::<RenderDevice>().unwrap();
-
-        let sim_params_layout = render_device.create_bind_group_layout(
+impl Default for ParticlesInitPipeline {
+    fn default() -> Self {
+        let sim_params_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:update_sim_params",
             // @group(0) @binding(0) var<uniform> sim_params: SimParams;
             &[BindGroupLayoutEntry {
@@ -1091,10 +1089,10 @@ impl FromWorld for ParticlesInitPipeline {
         );
 
         Self {
-            sim_params_layout,
-            temp_particle_bind_group_layout: None,
-            temp_spawner_bind_group_layout: None,
-            temp_metadata_bind_group_layout: None,
+            sim_params_layout_descriptor,
+            temp_particle_bind_group_layout_descriptor: None,
+            temp_spawner_bind_group_layout_descriptor: None,
+            temp_metadata_bind_group_layout_descriptor: None,
         }
     }
 }
@@ -1121,15 +1119,15 @@ pub(crate) struct ParticleInitPipelineKey {
     parent_particle_layout_min_binding_size: Option<NonZeroU32>,
     /// Pipeline flags.
     flags: ParticleInitPipelineKeyFlags,
-    /// Layout of the particle@1 bind group this pipeline was specialized with.
-    // Note: can't directly store BindGroupLayout because it's not Eq nor Hash
-    particle_bind_group_layout_id: BindGroupLayoutId,
-    /// Layout of the spawner@2 bind group this pipeline was specialized with.
-    // Note: can't directly store BindGroupLayout because it's not Eq nor Hash
-    spawner_bind_group_layout_id: BindGroupLayoutId,
-    /// Layout of the metadata@3 bind group this pipeline was specialized with.
-    // Note: can't directly store BindGroupLayout because it's not Eq nor Hash
-    metadata_bind_group_layout_id: BindGroupLayoutId,
+    /// Layout descriptor of the particle@1 bind group this pipeline was
+    /// specialized with.
+    particle_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    /// Layout descriptor of the spawner@2 bind group this pipeline was
+    /// specialized with.
+    spawner_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    /// Layout descriptor of the metadata@3 bind group this pipeline was
+    /// specialized with.
+    metadata_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
 }
 
 impl SpecializedComputePipeline for ParticlesInitPipeline {
@@ -1171,20 +1169,29 @@ impl SpecializedComputePipeline for ParticlesInitPipeline {
         // how we pass the value to specialize() to work around the lack of access to
         // external data.
         // https://github.com/bevyengine/bevy/issues/17132
-        let particle_bind_group_layout = self.temp_particle_bind_group_layout.as_ref().unwrap();
+        let particle_bind_group_layout_descriptor = self
+            .temp_particle_bind_group_layout_descriptor
+            .as_ref()
+            .unwrap();
         assert_eq!(
-            particle_bind_group_layout.id(),
-            key.particle_bind_group_layout_id
+            *particle_bind_group_layout_descriptor,
+            key.particle_bind_group_layout_descriptor
         );
-        let spawner_bind_group_layout = self.temp_spawner_bind_group_layout.as_ref().unwrap();
+        let spawner_bind_group_layout_descriptor = self
+            .temp_spawner_bind_group_layout_descriptor
+            .as_ref()
+            .unwrap();
         assert_eq!(
-            spawner_bind_group_layout.id(),
-            key.spawner_bind_group_layout_id
+            *spawner_bind_group_layout_descriptor,
+            key.spawner_bind_group_layout_descriptor
         );
-        let metadata_bind_group_layout = self.temp_metadata_bind_group_layout.as_ref().unwrap();
+        let metadata_bind_group_layout_descriptor = self
+            .temp_metadata_bind_group_layout_descriptor
+            .as_ref()
+            .unwrap();
         assert_eq!(
-            metadata_bind_group_layout.id(),
-            key.metadata_bind_group_layout_id
+            *metadata_bind_group_layout_descriptor,
+            key.metadata_bind_group_layout_descriptor
         );
 
         let label = format!("hanabi:pipeline:init_{hash:016X}");
@@ -1199,10 +1206,10 @@ impl SpecializedComputePipeline for ParticlesInitPipeline {
         ComputePipelineDescriptor {
             label: Some(label.into()),
             layout: vec![
-                self.sim_params_layout.clone(),
-                particle_bind_group_layout.clone(),
-                spawner_bind_group_layout.clone(),
-                metadata_bind_group_layout.clone(),
+                self.sim_params_layout_descriptor.clone(),
+                particle_bind_group_layout_descriptor.clone(),
+                spawner_bind_group_layout_descriptor.clone(),
+                metadata_bind_group_layout_descriptor.clone(),
             ],
             shader: key.shader,
             shader_defs,
@@ -1215,24 +1222,22 @@ impl SpecializedComputePipeline for ParticlesInitPipeline {
 
 #[derive(Resource)]
 pub(crate) struct ParticlesUpdatePipeline {
-    sim_params_layout: BindGroupLayout,
+    sim_params_layout_descriptor: BindGroupLayoutDescriptor,
 
     // Temporary values passed to specialize()
     // https://github.com/bevyengine/bevy/issues/17132
     /// Layout of the particle@1 bind group this pipeline was specialized with.
-    temp_particle_bind_group_layout: Option<BindGroupLayout>,
+    temp_particle_bind_group_layout_descriptor: Option<BindGroupLayoutDescriptor>,
     /// Layout of the spawner@2 bind group this pipeline was specialized with.
-    temp_spawner_bind_group_layout: Option<BindGroupLayout>,
+    temp_spawner_bind_group_layout_descriptor: Option<BindGroupLayoutDescriptor>,
     /// Layout of the metadata@3 bind group this pipeline was specialized with.
-    temp_metadata_bind_group_layout: Option<BindGroupLayout>,
+    temp_metadata_bind_group_layout_descriptor: Option<BindGroupLayoutDescriptor>,
 }
 
-impl FromWorld for ParticlesUpdatePipeline {
-    fn from_world(world: &mut World) -> Self {
-        let render_device = world.get_resource::<RenderDevice>().unwrap();
-
+impl Default for ParticlesUpdatePipeline {
+    fn default() -> Self {
         trace!("GpuSimParams: min_size={}", GpuSimParams::min_size());
-        let sim_params_layout = render_device.create_bind_group_layout(
+        let sim_params_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:update:particle",
             &[BindGroupLayoutEntry {
                 binding: 0,
@@ -1247,10 +1252,10 @@ impl FromWorld for ParticlesUpdatePipeline {
         );
 
         Self {
-            sim_params_layout,
-            temp_particle_bind_group_layout: None,
-            temp_spawner_bind_group_layout: None,
-            temp_metadata_bind_group_layout: None,
+            sim_params_layout_descriptor,
+            temp_particle_bind_group_layout_descriptor: None,
+            temp_spawner_bind_group_layout_descriptor: None,
+            temp_metadata_bind_group_layout_descriptor: None,
         }
     }
 }
@@ -1267,15 +1272,15 @@ pub(crate) struct ParticleUpdatePipelineKey {
     parent_particle_layout_min_binding_size: Option<NonZeroU32>,
     /// Key: EMITS_GPU_SPAWN_EVENTS
     num_event_buffers: u32,
-    /// Layout of the particle@1 bind group this pipeline was specialized with.
-    // Note: can't directly store BindGroupLayout because it's not Eq nor Hash
-    particle_bind_group_layout_id: BindGroupLayoutId,
-    /// Layout of the spawner@2 bind group this pipeline was specialized with.
-    // Note: can't directly store BindGroupLayout because it's not Eq nor Hash
-    spawner_bind_group_layout_id: BindGroupLayoutId,
-    /// Layout of the metadata@3 bind group this pipeline was specialized with.
-    // Note: can't directly store BindGroupLayout because it's not Eq nor Hash
-    metadata_bind_group_layout_id: BindGroupLayoutId,
+    /// Layout descriptor of the particle@1 bind group this pipeline was
+    /// specialized with.
+    particle_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    /// Layout descriptor of the spawner@2 bind group this pipeline was
+    /// specialized with.
+    spawner_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    /// Layout descriptor of the metadata@3 bind group this pipeline was
+    /// specialized with.
+    metadata_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
 }
 
 impl SpecializedComputePipeline for ParticlesUpdatePipeline {
@@ -1308,20 +1313,29 @@ impl SpecializedComputePipeline for ParticlesUpdatePipeline {
         // how we pass the value to specialize() to work around the lack of access to
         // external data.
         // https://github.com/bevyengine/bevy/issues/17132
-        let particle_bind_group_layout = self.temp_particle_bind_group_layout.as_ref().unwrap();
+        let particle_bind_group_layout_descriptor = self
+            .temp_particle_bind_group_layout_descriptor
+            .as_ref()
+            .unwrap();
         assert_eq!(
-            particle_bind_group_layout.id(),
-            key.particle_bind_group_layout_id
+            *particle_bind_group_layout_descriptor,
+            key.particle_bind_group_layout_descriptor
         );
-        let spawner_bind_group_layout = self.temp_spawner_bind_group_layout.as_ref().unwrap();
+        let spawner_bind_group_layout_descriptor = self
+            .temp_spawner_bind_group_layout_descriptor
+            .as_ref()
+            .unwrap();
         assert_eq!(
-            spawner_bind_group_layout.id(),
-            key.spawner_bind_group_layout_id
+            *spawner_bind_group_layout_descriptor,
+            key.spawner_bind_group_layout_descriptor
         );
-        let metadata_bind_group_layout = self.temp_metadata_bind_group_layout.as_ref().unwrap();
+        let metadata_bind_group_layout_descriptor = self
+            .temp_metadata_bind_group_layout_descriptor
+            .as_ref()
+            .unwrap();
         assert_eq!(
-            metadata_bind_group_layout.id(),
-            key.metadata_bind_group_layout_id
+            *metadata_bind_group_layout_descriptor,
+            key.metadata_bind_group_layout_descriptor
         );
 
         let hash = calc_func_id(&key);
@@ -1337,10 +1351,10 @@ impl SpecializedComputePipeline for ParticlesUpdatePipeline {
         ComputePipelineDescriptor {
             label: Some(label.into()),
             layout: vec![
-                self.sim_params_layout.clone(),
-                particle_bind_group_layout.clone(),
-                spawner_bind_group_layout.clone(),
-                metadata_bind_group_layout.clone(),
+                self.sim_params_layout_descriptor.clone(),
+                particle_bind_group_layout_descriptor.clone(),
+                spawner_bind_group_layout_descriptor.clone(),
+                metadata_bind_group_layout_descriptor.clone(),
             ],
             shader: key.shader,
             shader_defs,
@@ -1353,7 +1367,7 @@ impl SpecializedComputePipeline for ParticlesUpdatePipeline {
 
 #[derive(Resource)]
 pub(crate) struct RenderBatchPipeline {
-    bind_group_layout: BindGroupLayout,
+    bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     shader: Handle<Shader>,
 }
 
@@ -1444,13 +1458,13 @@ impl FromWorld for RenderBatchPipeline {
             },
         ];
 
-        let bind_group_layout = render_device.create_bind_group_layout(
+        let bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:render_batch",
             &bind_group_layout_entries,
         );
 
         Self {
-            bind_group_layout,
+            bind_group_layout_descriptor,
             shader,
         }
     }
@@ -1458,17 +1472,17 @@ impl FromWorld for RenderBatchPipeline {
 
 #[derive(Resource)]
 pub(crate) struct ParticlesRenderPipeline {
-    render_device: RenderDevice,
-    view_no_pbr_layout: BindGroupLayout,
-    view_pbr_layout: BindGroupLayout,
-    view_transmissive_layout: BindGroupLayout,
-    effect_metadata_bind_group_layout: BindGroupLayout,
-    /// Layout of the particle@1 bind group for the render pass, for non-PBR
-    /// views.
-    render_particles_no_pbr_bind_group_layout: BindGroupLayout,
-    /// Layout of the particle@1 bind group for the render pass, for PBR views.
-    render_particles_pbr_bind_group_layout: BindGroupLayout,
-    material_layouts: HashMap<TextureLayout, BindGroupLayout>,
+    view_no_pbr_layout_descriptor: BindGroupLayoutDescriptor,
+    view_pbr_layout_descriptor: BindGroupLayoutDescriptor,
+    view_transmissive_layout_descriptor: BindGroupLayoutDescriptor,
+    effect_metadata_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    /// Layout descriptor of the particle@1 bind group for the render pass, for
+    /// non-PBR views.
+    render_particles_no_pbr_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    /// Layout descriptor of the particle@1 bind group for the render pass, for
+    /// PBR views.
+    render_particles_pbr_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    material_layout_descriptors: HashMap<TextureLayout, BindGroupLayoutDescriptor>,
 }
 
 impl ParticlesRenderPipeline {
@@ -1483,7 +1497,7 @@ impl ParticlesRenderPipeline {
         // doesn't exist, and without having to build a key (as opposed to a reference).
         // So do 2 lookups instead, to avoid having to clone the layout if it's already
         // cached (which should be the common case).
-        if self.material_layouts.contains_key(layout) {
+        if self.material_layout_descriptors.contains_key(layout) {
             return;
         }
 
@@ -1514,22 +1528,21 @@ impl ParticlesRenderPipeline {
             entries,
             layout
         );
-        let material_bind_group_layout = self
-            .render_device
-            .create_bind_group_layout("hanabi:material_layout_render", &entries[..]);
+        let material_bind_group_layout_descriptor =
+            BindGroupLayoutDescriptor::new("hanabi:material_layout_render", &entries[..]);
 
-        self.material_layouts
-            .insert(layout.clone(), material_bind_group_layout);
+        self.material_layout_descriptors
+            .insert(layout.clone(), material_bind_group_layout_descriptor);
     }
 
-    /// Retrieve a bind group layout for a cached material.
-    pub fn get_material(&self, layout: &TextureLayout) -> Option<&BindGroupLayout> {
+    /// Retrieve a bind group layout descriptor for a cached material.
+    pub fn get_material(&self, layout: &TextureLayout) -> Option<&BindGroupLayoutDescriptor> {
         // Prevent a hash and lookup for the trivial case of an empty layout
         if layout.layout.is_empty() {
             return None;
         }
 
-        self.material_layouts.get(layout)
+        self.material_layout_descriptors.get(layout)
     }
 }
 
@@ -1537,22 +1550,26 @@ impl FromWorld for ParticlesRenderPipeline {
     fn from_world(world: &mut World) -> Self {
         let render_device = world.get_resource::<RenderDevice>().unwrap();
 
-        let view_layout = create_view_bind_group_layout(render_device, RenderBindGroupType::D2);
-        let view_lights_layout =
-            create_view_bind_group_layout(render_device, RenderBindGroupType::Lights);
-        let view_transmissive_layout =
-            create_view_bind_group_layout(render_device, RenderBindGroupType::Transmissive);
+        let view_layout_descriptor =
+            create_view_bind_group_layout_descriptor(RenderBindGroupType::D2);
+        let view_lights_layout_descriptor =
+            create_view_bind_group_layout_descriptor(RenderBindGroupType::Lights);
+        let view_transmissive_layout_descriptor =
+            create_view_bind_group_layout_descriptor(RenderBindGroupType::Transmissive);
 
-        let render_particles_no_pbr_bind_group_layout =
-            create_render_particles_bind_group_layout(render_device, /*pbr=*/ false);
-        let render_particles_pbr_bind_group_layout =
-            create_render_particles_bind_group_layout(render_device, /*pbr=*/ true);
+        let render_particles_no_pbr_bind_group_layout_descriptor =
+            create_render_particles_bind_group_layout_descriptor(
+                render_device,
+                /*pbr=*/ false,
+            );
+        let render_particles_pbr_bind_group_layout_descriptor =
+            create_render_particles_bind_group_layout_descriptor(render_device, /*pbr=*/ true);
 
         let storage_alignment = render_device.limits().min_storage_buffer_offset_alignment;
         let effect_metadata_size = GpuEffectMetadata::aligned_size(storage_alignment);
         let batch_descriptor_size = GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
-        let effect_metadata_bind_group_layout = render_device.create_bind_group_layout(
+        let effect_metadata_bind_group_layout = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:render:effect_metadata",
             &[
                 // @group(2) @binding(0) var<storage, read_write> effect_metadata : array<EffectMetadata>;
@@ -1595,14 +1612,13 @@ impl FromWorld for ParticlesRenderPipeline {
         );
 
         Self {
-            render_device: render_device.clone(),
-            view_no_pbr_layout: view_layout,
-            view_pbr_layout: view_lights_layout,
-            render_particles_no_pbr_bind_group_layout,
-            render_particles_pbr_bind_group_layout,
-            view_transmissive_layout,
-            effect_metadata_bind_group_layout,
-            material_layouts: default(),
+            view_no_pbr_layout_descriptor: view_layout_descriptor,
+            view_pbr_layout_descriptor: view_lights_layout_descriptor,
+            render_particles_no_pbr_bind_group_layout_descriptor,
+            render_particles_pbr_bind_group_layout_descriptor,
+            view_transmissive_layout_descriptor,
+            effect_metadata_bind_group_layout_descriptor: effect_metadata_bind_group_layout,
+            material_layout_descriptors: default(),
         }
     }
 }
@@ -1713,21 +1729,23 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
 
         trace!("Fetching layout for bind group particle@1 of render pass");
         let particle_bind_group_layout = if key.view_is_pbr {
-            self.render_particles_pbr_bind_group_layout.clone()
+            self.render_particles_pbr_bind_group_layout_descriptor
+                .clone()
         } else {
-            self.render_particles_no_pbr_bind_group_layout.clone()
+            self.render_particles_no_pbr_bind_group_layout_descriptor
+                .clone()
         };
 
-        let mut layout = vec![];
+        let mut layout: Vec<BindGroupLayoutDescriptor> = vec![];
         if key.alpha_mask == ParticleRenderAlphaMaskPipelineKey::Transmissive {
-            layout.push(self.view_transmissive_layout.clone());
+            layout.push(self.view_transmissive_layout_descriptor.clone());
         } else if key.view_is_pbr {
-            layout.push(self.view_pbr_layout.clone());
+            layout.push(self.view_pbr_layout_descriptor.clone());
         } else {
-            layout.push(self.view_no_pbr_layout.clone());
+            layout.push(self.view_no_pbr_layout_descriptor.clone());
         }
         layout.push(particle_bind_group_layout);
-        layout.push(self.effect_metadata_bind_group_layout.clone());
+        layout.push(self.effect_metadata_bind_group_layout_descriptor.clone());
 
         let mut shader_defs = vec![];
 
@@ -1743,8 +1761,9 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
         });
 
         // Bind group 3, if applicable.
-        if let Some(material_bind_group_layout) = self.get_material(&key.texture_layout) {
-            layout.push(material_bind_group_layout.clone());
+        if let Some(material_bind_group_layout_descriptor) = self.get_material(&key.texture_layout)
+        {
+            layout.push(material_bind_group_layout_descriptor.clone());
         }
 
         // Key: LOCAL_SPACE_SIMULATION
@@ -2763,7 +2782,7 @@ impl EffectsMeta {
                 let parent_min_binding_size = added_effect
                     .parent
                     .map(|added_parent| added_parent.layout.min_binding_size32());
-                effect_cache.ensure_particle_bind_group_layout(
+                effect_cache.ensure_particle_bind_group_layout_descriptor(
                     added_effect.particle_layout.min_binding_size32(),
                     parent_min_binding_size,
                     added_effect.luts.images.len() as u32,
@@ -3703,8 +3722,8 @@ pub(crate) fn prepare_effects(
             // This should always exist by the time we reach this point, because we should
             // have inserted any property in the cache, which would have allocated the
             // proper bind group layout (or the default no-property one).
-            let spawner_bind_group_layout = property_cache
-                .bind_group_layout(property_layout_min_binding_size)
+            let spawner_bind_group_layout_descriptor = property_cache
+                .bind_group_layout_descriptor(property_layout_min_binding_size)
                 .unwrap_or_else(|| {
                     panic!(
                         "Failed to find spawner@2 bind group layout for property binding size {:?}",
@@ -3713,7 +3732,7 @@ pub(crate) fn prepare_effects(
                 });
             trace!(
                 "Retrieved spawner@2 bind group layout {:?} for property binding size {:?}.",
-                spawner_bind_group_layout.id(),
+                spawner_bind_group_layout_descriptor,
                 property_layout_min_binding_size
             );
 
@@ -3741,25 +3760,28 @@ pub(crate) fn prepare_effects(
                 } else {
                     None
                 };
-            let Some(particle_bind_group_layout) = effect_cache.particle_bind_group_layout(
-                effect_slice.particle_layout.min_binding_size32(),
-                parent_particle_layout_min_binding_size,
-            ) else {
+            let Some(particle_bind_group_layout_descriptor) = effect_cache
+                .particle_bind_group_layout_descriptor(
+                    effect_slice.particle_layout.min_binding_size32(),
+                    parent_particle_layout_min_binding_size,
+                )
+            else {
                 error!("Failed to find particle sim bind group @1 for min_binding_size={} parent_min_binding_size={:?}", 
                 effect_slice.particle_layout.min_binding_size32(), parent_particle_layout_min_binding_size);
                 continue;
             };
-            let particle_bind_group_layout = particle_bind_group_layout.clone();
+            let particle_bind_group_layout_descriptor =
+                particle_bind_group_layout_descriptor.clone();
             trace!(
                 "Retrieved particle@1 bind group layout {:?} for particle binding size {:?} and parent binding size {:?}.",
-                particle_bind_group_layout.id(),
+                particle_bind_group_layout_descriptor,
                 effect_slice.particle_layout.min_binding_size32(),
                 parent_particle_layout_min_binding_size,
             );
 
             let particle_layout_min_binding_size =
                 effect_slice.particle_layout.min_binding_size32();
-            let spawner_bind_group_layout = spawner_bind_group_layout.clone();
+            let spawner_bind_group_layout_descriptor = spawner_bind_group_layout_descriptor.clone();
 
             // Specialize the init pipeline based on the effect.
             let init_pipeline_id = {
@@ -3767,21 +3789,23 @@ pub(crate) fn prepare_effects(
                     .contains(ParticleInitPipelineKeyFlags::CONSUME_GPU_SPAWN_EVENTS);
 
                 // Fetch the metadata@3 bind group layout from the cache
-                let metadata_bind_group_layout = effect_cache
-                    .metadata_init_bind_group_layout(consume_gpu_spawn_events)
+                let metadata_bind_group_layout_descriptor = effect_cache
+                    .metadata_init_bind_group_layout_descriptor(consume_gpu_spawn_events)
                     .unwrap()
                     .clone();
 
-                // https://github.com/bevyengine/bevy/issues/17132
-                let particle_bind_group_layout_id = particle_bind_group_layout.id();
-                let spawner_bind_group_layout_id = spawner_bind_group_layout.id();
-                let metadata_bind_group_layout_id = metadata_bind_group_layout.id();
-                pipelines.init_pipeline.temp_particle_bind_group_layout =
-                    Some(particle_bind_group_layout.clone());
-                pipelines.init_pipeline.temp_spawner_bind_group_layout =
-                    Some(spawner_bind_group_layout.clone());
-                pipelines.init_pipeline.temp_metadata_bind_group_layout =
-                    Some(metadata_bind_group_layout);
+                pipelines
+                    .init_pipeline
+                    .temp_particle_bind_group_layout_descriptor =
+                    Some(particle_bind_group_layout_descriptor.clone());
+                pipelines
+                    .init_pipeline
+                    .temp_spawner_bind_group_layout_descriptor =
+                    Some(spawner_bind_group_layout_descriptor.clone());
+                pipelines
+                    .init_pipeline
+                    .temp_metadata_bind_group_layout_descriptor =
+                    Some(metadata_bind_group_layout_descriptor.clone());
                 let init_pipeline_id: CachedComputePipelineId = specialized_init_pipelines
                     .specialize(
                         pipeline_cache,
@@ -3791,15 +3815,23 @@ pub(crate) fn prepare_effects(
                             particle_layout_min_binding_size,
                             parent_particle_layout_min_binding_size,
                             flags: init_pipeline_key_flags,
-                            particle_bind_group_layout_id,
-                            spawner_bind_group_layout_id,
-                            metadata_bind_group_layout_id,
+                            particle_bind_group_layout_descriptor:
+                                particle_bind_group_layout_descriptor.clone(),
+                            spawner_bind_group_layout_descriptor:
+                                spawner_bind_group_layout_descriptor.clone(),
+                            metadata_bind_group_layout_descriptor,
                         },
                     );
                 // keep things tidy; this is just a hack, should not persist
-                pipelines.init_pipeline.temp_particle_bind_group_layout = None;
-                pipelines.init_pipeline.temp_spawner_bind_group_layout = None;
-                pipelines.init_pipeline.temp_metadata_bind_group_layout = None;
+                pipelines
+                    .init_pipeline
+                    .temp_particle_bind_group_layout_descriptor = None;
+                pipelines
+                    .init_pipeline
+                    .temp_spawner_bind_group_layout_descriptor = None;
+                pipelines
+                    .init_pipeline
+                    .temp_metadata_bind_group_layout_descriptor = None;
                 trace!("Init pipeline specialized: id={:?}", init_pipeline_id);
 
                 init_pipeline_id
@@ -3818,21 +3850,23 @@ pub(crate) fn prepare_effects(
                 effect_cache.ensure_metadata_update_bind_group_layout(num_event_buffers);
 
                 // Fetch the bind group layouts from the cache
-                let metadata_bind_group_layout = effect_cache
-                    .metadata_update_bind_group_layout(num_event_buffers)
+                let metadata_bind_group_layout_descriptor = effect_cache
+                    .metadata_update_bind_group_layout_descriptor(num_event_buffers)
                     .unwrap()
                     .clone();
 
-                // https://github.com/bevyengine/bevy/issues/17132
-                let particle_bind_group_layout_id = particle_bind_group_layout.id();
-                let spawner_bind_group_layout_id = spawner_bind_group_layout.id();
-                let metadata_bind_group_layout_id = metadata_bind_group_layout.id();
-                pipelines.update_pipeline.temp_particle_bind_group_layout =
-                    Some(particle_bind_group_layout);
-                pipelines.update_pipeline.temp_spawner_bind_group_layout =
-                    Some(spawner_bind_group_layout);
-                pipelines.update_pipeline.temp_metadata_bind_group_layout =
-                    Some(metadata_bind_group_layout);
+                pipelines
+                    .update_pipeline
+                    .temp_particle_bind_group_layout_descriptor =
+                    Some(particle_bind_group_layout_descriptor.clone());
+                pipelines
+                    .update_pipeline
+                    .temp_spawner_bind_group_layout_descriptor =
+                    Some(spawner_bind_group_layout_descriptor.clone());
+                pipelines
+                    .update_pipeline
+                    .temp_metadata_bind_group_layout_descriptor =
+                    Some(metadata_bind_group_layout_descriptor.clone());
                 let update_pipeline_id = specialized_update_pipelines.specialize(
                     pipeline_cache,
                     &pipelines.update_pipeline,
@@ -3841,15 +3875,21 @@ pub(crate) fn prepare_effects(
                         particle_layout: effect_slice.particle_layout.clone(),
                         parent_particle_layout_min_binding_size,
                         num_event_buffers,
-                        particle_bind_group_layout_id,
-                        spawner_bind_group_layout_id,
-                        metadata_bind_group_layout_id,
+                        particle_bind_group_layout_descriptor,
+                        spawner_bind_group_layout_descriptor,
+                        metadata_bind_group_layout_descriptor,
                     },
                 );
                 // keep things tidy; this is just a hack, should not persist
-                pipelines.update_pipeline.temp_particle_bind_group_layout = None;
-                pipelines.update_pipeline.temp_spawner_bind_group_layout = None;
-                pipelines.update_pipeline.temp_metadata_bind_group_layout = None;
+                pipelines
+                    .update_pipeline
+                    .temp_particle_bind_group_layout_descriptor = None;
+                pipelines
+                    .update_pipeline
+                    .temp_spawner_bind_group_layout_descriptor = None;
+                pipelines
+                    .update_pipeline
+                    .temp_metadata_bind_group_layout_descriptor = None;
                 trace!("Update pipeline specialized: id={:?}", update_pipeline_id);
 
                 update_pipeline_id
@@ -3863,7 +3903,7 @@ pub(crate) fn prepare_effects(
             // For ribbons, which need particle sorting, create a bind group layout for
             // sorting the effect, based on its particle layout.
             if extracted_effect.layout_flags.contains(LayoutFlags::RIBBONS) {
-                if let Err(err) = sort_bind_groups.ensure_sort_fill_bind_group_layout(
+                if let Err(err) = sort_bind_groups.ensure_sort_fill_bind_group_layout_descriptor(
                     pipeline_cache,
                     &extracted_effect.particle_layout,
                 ) {
@@ -4103,7 +4143,7 @@ pub(crate) fn prepare_effects(
     {
         // All those bind groups use the buffer so need to be re-created
         trace!("*** Effect metadata buffer re-allocated; clearing all bind groups using it.");
-        for mut view_effect_bind_groups in effect_bind_groups.view_effect_bind_groups.values_mut() {
+        for view_effect_bind_groups in effect_bind_groups.view_effect_bind_groups.values_mut() {
             view_effect_bind_groups.particle_buffers.clear();
         }
         effects_meta.indirect_metadata_bind_group = None;
@@ -4920,7 +4960,8 @@ impl EffectBindGroups {
         &mut self,
         effect_instance: &EffectInstance,
         render_device: &RenderDevice,
-        layout: &BindGroupLayout,
+        pipeline_cache: &PipelineCache,
+        layout_descriptor: &BindGroupLayoutDescriptor,
         effect_metadata_buffer: &Buffer,
         batch_descriptor_buffer: &Buffer,
         batch_effect_indices_buffer: &Buffer,
@@ -5004,7 +5045,7 @@ impl EffectBindGroups {
 
             let bind_group = render_device.create_bind_group(
                 "hanabi:bind_group:init:metadata@3",
-                layout,
+                &pipeline_cache.get_bind_group_layout(layout_descriptor),
                 &entries[..],
             );
 
@@ -5049,7 +5090,8 @@ impl EffectBindGroups {
         &mut self,
         effect_instance: &EffectInstance,
         render_device: &RenderDevice,
-        layout: &BindGroupLayout,
+        pipeline_cache: &PipelineCache,
+        layout_descriptor: &BindGroupLayoutDescriptor,
         batch_descriptor_buffer: &Buffer,
         render_batch_effect_index_buffer: &Buffer,
         effect_metadata_buffer: &Buffer,
@@ -5155,7 +5197,7 @@ impl EffectBindGroups {
 
             let bind_group = render_device.create_bind_group(
                 "hanabi:bind_group:update:metadata@3",
-                layout,
+                &pipeline_cache.get_bind_group_layout(layout_descriptor),
                 &entries[..],
             );
 
@@ -5354,7 +5396,7 @@ fn emit_sorted_draw<T, F>(
             view_entities.extend(
                 visible_entities
                     .iter::<EffectVisibilityClass>()
-                    .map(|e| e.1.index() as usize),
+                    .map(|e| e.1.index().index() as usize),
             );
         }
 
@@ -5424,7 +5466,7 @@ fn emit_sorted_draw<T, F>(
             let has_visible_entity = effect_instance
                 .entities
                 .iter()
-                .any(|index| view_entities.contains(*index as usize));
+                .any(|index| view_entities.contains(index.index() as usize));
             if !has_visible_entity {
                 trace!("No visible entity for view, not emitting any draw call.");
                 continue;
@@ -5568,7 +5610,7 @@ fn emit_binned_draw<T, F, G>(
             view_entities.extend(
                 visible_entities
                     .iter::<EffectVisibilityClass>()
-                    .map(|e| e.1.index() as usize),
+                    .map(|e| e.1.index().index() as usize),
             );
         }
 
@@ -5620,7 +5662,7 @@ fn emit_binned_draw<T, F, G>(
             let has_visible_entity = effect_instance
                 .entities
                 .iter()
-                .any(|index| view_entities.contains(*index as usize));
+                .any(|index| view_entities.contains(index.index() as usize));
             if !has_visible_entity {
                 trace!("No visible entity for view, not emitting any draw call.");
                 continue;
@@ -5855,7 +5897,7 @@ pub(crate) fn queue_effects(
                 |id, entity, batch, view| Transparent3d {
                     distance: view
                         .rangefinder3d()
-                        .distance_translation(&batch.representative_translation),
+                        .distance(&batch.representative_translation),
                     pipeline: id,
                     entity,
                     draw_function: draw_effects_function_3d,
@@ -5895,7 +5937,7 @@ pub(crate) fn queue_effects(
                 |id, entity, batch, view| Transmissive3d {
                     distance: view
                         .rangefinder3d()
-                        .distance_translation(&batch.representative_translation),
+                        .distance(&batch.representative_translation),
                     pipeline: id,
                     entity,
                     draw_function: draw_effects_function_transmissive,
@@ -6012,25 +6054,12 @@ pub(crate) fn prepare_gpu_resources(
         ),
         With<ExtractedView>,
     >,
-    q_pbr_views_debug: Query<
-        (
-            Entity,
-            Has<ViewShadowBindings>,
-            Has<ViewClusterBindings>,
-            Has<RenderViewLightProbes<EnvironmentMapLight>>,
-            Has<RenderViewLightProbes<IrradianceVolume>>,
-            Has<ViewTransmissionTexture>,
-        ),
-        With<ExtractedView>,
-    >,
     mut effects_meta: ResMut<EffectsMeta>,
     mut event_cache: ResMut<EventCache>,
     mut effect_bind_groups: ResMut<EffectBindGroups>,
     (render_device, render_queue): (Res<RenderDevice>, Res<RenderQueue>),
     view_uniforms: Res<ViewUniforms>,
     render_pipeline: Res<ParticlesRenderPipeline>,
-    gpu_images: Res<RenderAssets<GpuImage>>,
-    fallback_images: Res<FallbackImage>,
     (maybe_light_meta, maybe_clusterable_object_meta, maybe_shadow_samplers): (
         Option<Res<LightMeta>>,
         Option<Res<GlobalClusterableObjectMeta>>,
@@ -6042,6 +6071,7 @@ pub(crate) fn prepare_gpu_resources(
         Res<LightProbesBuffer>,
         Res<EnvironmentMapUniformBuffer>,
     ),
+    pipeline_cache: Res<PipelineCache>,
 ) {
     // Get the binding for the ViewUniform, the uniform data structure containing
     // the Camera data for the current view. If not available, we cannot render
@@ -6054,9 +6084,8 @@ pub(crate) fn prepare_gpu_resources(
     // FIXME - Not here!
     effects_meta.view_2d_bind_group = create_view_bind_group(
         &render_device,
-        &gpu_images,
-        &fallback_images,
-        &render_pipeline.view_no_pbr_layout,
+        &pipeline_cache,
+        &render_pipeline.view_no_pbr_layout_descriptor,
         &view_binding,
         None,
         &effects_meta,
@@ -6077,14 +6106,13 @@ pub(crate) fn prepare_gpu_resources(
             &q_pbr_views
         {
             let layout = if maybe_view_transmission_texture.is_some() {
-                &render_pipeline.view_transmissive_layout
+                &render_pipeline.view_transmissive_layout_descriptor
             } else {
-                &render_pipeline.view_pbr_layout
+                &render_pipeline.view_pbr_layout_descriptor
             };
             if let Some(view_bind_group) = create_view_bind_group(
                 &render_device,
-                &gpu_images,
-                &fallback_images,
+                &pipeline_cache,
                 layout,
                 &view_binding,
                 Some((
@@ -6129,14 +6157,6 @@ pub(crate) fn prepare_bind_groups(
             With<ViewEnvironmentMapUniformOffset>,
         ),
     >,
-    q_pbr_views_debug: Query<(
-        Has<ViewClusterBindings>,
-        Has<ViewShadowBindings>,
-        Has<ViewUniformOffset>,
-        Has<ViewLightsUniformOffset>,
-        Has<ViewLightProbesUniformOffset>,
-        Has<ViewEnvironmentMapUniformOffset>,
-    )>,
     mut effects_meta: ResMut<EffectsMeta>,
     (mut effect_cache, mut event_cache, property_cache): (
         ResMut<EffectCache>,
@@ -6165,6 +6185,7 @@ pub(crate) fn prepare_bind_groups(
     ),
     clusterable_object_meta: Option<Res<GlobalClusterableObjectMeta>>,
     render_pipeline: ResMut<ParticlesRenderPipeline>,
+    pipeline_cache: Res<PipelineCache>,
 ) {
     // We can't simulate nor render anything without at least the spawner buffer
     if effects_meta.spawner_buffer.is_empty() {
@@ -6193,14 +6214,17 @@ pub(crate) fn prepare_bind_groups(
         // Create the sim_params@0 bind group for the global simulation parameters,
         // which is shared by the init and update passes.
         if effects_meta.indirect_sim_params_bind_group.is_none() {
-            effects_meta.indirect_sim_params_bind_group = Some(render_device.create_bind_group(
-                "hanabi:bind_group:vfx_indirect:sim_params@0",
-                &update_pipeline.sim_params_layout, // FIXME - Shared with init
-                &[BindGroupEntry {
-                    binding: 0,
-                    resource: effects_meta.sim_params_uniforms.binding().unwrap(),
-                }],
-            ));
+            effects_meta.indirect_sim_params_bind_group = Some(
+                render_device.create_bind_group(
+                    "hanabi:bind_group:vfx_indirect:sim_params@0",
+                    &pipeline_cache
+                        .get_bind_group_layout(&update_pipeline.sim_params_layout_descriptor), // FIXME - Shared with init
+                    &[BindGroupEntry {
+                        binding: 0,
+                        resource: effects_meta.sim_params_uniforms.binding().unwrap(),
+                    }],
+                ),
+            );
         }
 
         // Create the @1 bind group for the indirect dispatch preparation pass of all
@@ -6213,7 +6237,9 @@ pub(crate) fn prepare_bind_groups(
                 // Base bind group for indirect pass
                 Some(render_device.create_bind_group(
                     "hanabi:bind_group:vfx_indirect:metadata@1",
-                    &dispatch_indirect_pipeline.effect_metadata_bind_group_layout,
+                    &pipeline_cache.get_bind_group_layout(
+                        &dispatch_indirect_pipeline.effect_metadata_bind_group_layout_descriptor,
+                    ),
                     &[
                         // @group(1) @binding(0) var<storage, read_write> effect_metadata_buffer : array<u32>;
                         BindGroupEntry {
@@ -6246,7 +6272,9 @@ pub(crate) fn prepare_bind_groups(
         if effects_meta.indirect_spawner_bind_group.is_none() {
             let bind_group = render_device.create_bind_group(
                 "hanabi:bind_group:vfx_indirect:spawner@2",
-                &dispatch_indirect_pipeline.spawner_bind_group_layout,
+                &pipeline_cache.get_bind_group_layout(
+                    &dispatch_indirect_pipeline.spawner_bind_group_layout_descriptor,
+                ),
                 &[
                     // @group(2) @binding(0) var<storage, read> spawner_buffer : array<Spawner>;
                     BindGroupEntry {
@@ -6274,7 +6302,9 @@ pub(crate) fn prepare_bind_groups(
         effects_meta.init_indirect_batch_bind_group = Some(
             render_device.create_bind_group(
                 "hanabi:bind_group:init_indirect_batch",
-                &init_indirect_batch_pipeline.bind_group_layout,
+                &pipeline_cache.get_bind_group_layout(
+                    &init_indirect_batch_pipeline.bind_group_layout_descriptor,
+                ),
                 &[
                     // @group(0) @binding(0) var<uniform> batch_metadata :
                     // BatchMetadata;
@@ -6354,7 +6384,8 @@ pub(crate) fn prepare_bind_groups(
         effects_meta.indirect_batch_bind_group = Some(
             render_device.create_bind_group(
                 "hanabi:bind_group:vfx_indirect_batch@0",
-                &indirect_batch_pipeline.bind_group_layout,
+                &pipeline_cache
+                    .get_bind_group_layout(&indirect_batch_pipeline.bind_group_layout_descriptor),
                 &[
                     // @group(0) @binding(0) var<uniform> batch_metadata :
                     // BatchMetadata;
@@ -6414,7 +6445,8 @@ pub(crate) fn prepare_bind_groups(
     effects_meta.render_batch_bind_group = Some(
         render_device.create_bind_group(
             "hanabi:bind_group:vfx_render_batch@0",
-            &render_batch_pipeline.bind_group_layout,
+            &pipeline_cache
+                .get_bind_group_layout(&render_batch_pipeline.bind_group_layout_descriptor),
             &[
                 // @group(0) @binding(0) var<uniform> batch_metadata :
                 // BatchMetadata;
@@ -6520,18 +6552,14 @@ render pass",
                     let mut irradiance_volume_texture_views = vec![];
                     let mut irradiance_volume_sampler = None;
 
-                    let bind_group_layout;
+                    let bind_group_layout_descriptor;
                     match (&clusterable_object_meta, q_pbr_views.get(view_entity)) {
                         (
-                            Some(clusterable_object_meta),
-                            Ok((
-                                view_cluster_bindings,
-                                maybe_view_environment_maps,
-                                maybe_view_irradiance_volumes,
-                            )),
+                            Some(_),
+                            Ok((_, maybe_view_environment_maps, maybe_view_irradiance_volumes)),
                         ) => {
-                            bind_group_layout =
-                                &render_pipeline.render_particles_pbr_bind_group_layout;
+                            bind_group_layout_descriptor =
+                                &render_pipeline.render_particles_pbr_bind_group_layout_descriptor;
 
                             // See `RenderViewEnvironmentMapBindGroupEntries::get` in
                             // `bevy_pbr/src/light_probe/environment_map.rs`.
@@ -6630,8 +6658,8 @@ render pass",
                             ]);
                         }
                         _ => {
-                            bind_group_layout =
-                                &render_pipeline.render_particles_no_pbr_bind_group_layout;
+                            bind_group_layout_descriptor = &render_pipeline
+                                .render_particles_no_pbr_bind_group_layout_descriptor;
                         }
                     }
 
@@ -6661,7 +6689,7 @@ render pass",
 
                     let render = render_device.create_bind_group(
                         &format!("hanabi:bind_group:render:particles@1:vfx{buffer_index}")[..],
-                        bind_group_layout,
+                        &pipeline_cache.get_bind_group_layout(bind_group_layout_descriptor),
                         &entries[..],
                     );
 
@@ -6689,6 +6717,7 @@ render pass",
                 &property_cache,
                 &spawner_buffer,
                 &render_device,
+                &pipeline_cache,
             ) {
                 error!("Failed to create property bind group for effect instance: {err:?}");
                 continue;
@@ -6697,6 +6726,7 @@ render pass",
             &property_cache,
             &spawner_buffer,
             &render_device,
+            &pipeline_cache,
         ) {
             error!("Failed to create property bind group for effect instance: {err:?}");
             continue;
@@ -6710,6 +6740,7 @@ render pass",
                 &render_device,
                 &gpu_images,
                 &fallback_images,
+                &pipeline_cache,
                 effect_instance.particle_layout.min_binding_size32(),
                 effect_instance.parent_min_binding_size,
                 effect_instance.parent_binding_source.as_ref(),
@@ -6745,8 +6776,8 @@ render pass",
                 assert!(!consume_gpu_spawn_events);
                 None
             };
-            let Some(init_metadata_layout) =
-                effect_cache.metadata_init_bind_group_layout(consume_gpu_spawn_events)
+            let Some(init_metadata_layout_descriptor) =
+                effect_cache.metadata_init_bind_group_layout_descriptor(consume_gpu_spawn_events)
             else {
                 continue;
             };
@@ -6754,7 +6785,8 @@ render pass",
                 .get_or_create_init_metadata(
                     effect_instance,
                     &render_device,
-                    init_metadata_layout,
+                    &pipeline_cache,
+                    init_metadata_layout_descriptor,
                     effects_meta.effect_metadata_buffer.buffer().unwrap(),
                     effects_meta
                         .batch_descriptor_buffer
@@ -6778,7 +6810,7 @@ render pass",
             let num_event_buffers = effect_instance.child_event_buffers.len() as u32;
 
             let Some(update_metadata_layout) =
-                effect_cache.metadata_update_bind_group_layout(num_event_buffers)
+                effect_cache.metadata_update_bind_group_layout_descriptor(num_event_buffers)
             else {
                 continue;
             };
@@ -6786,6 +6818,7 @@ render pass",
                 .get_or_create_update_metadata(
                     effect_instance,
                     &render_device,
+                    &pipeline_cache,
                     update_metadata_layout,
                     effects_meta
                         .batch_descriptor_buffer
@@ -6875,6 +6908,7 @@ render pass",
                 sort_dispatch_indirect_buffer,
                 render_batch_descriptors_requiring_sorting_buffer,
                 render_batch_metadata_buffer,
+                &pipeline_cache,
             ) {
                 error!(
                     "Failed to create sort-indirect-batch bind group @0 for ribbon effect: {:?}",
@@ -6894,6 +6928,7 @@ render pass",
                 effect_sort_metadata_buffer,
                 render_batch_descriptor_buffer,
                 render_batch_effect_index_buffer,
+                &pipeline_cache,
             ) {
                 error!(
                     "Failed to create sort-fill bind group @0 for ribbon effect: {:?}",
@@ -6916,6 +6951,7 @@ render pass",
                 effects_meta.sort_metadata_indices_buffer.len(),
                 sort_mergesort_dispatch_indirect_buffer,
                 render_batch_metadata_buffer,
+                &pipeline_cache,
             ) {
                 error!(
                     "Failed to create mergesort-init bind group @0 for ribbon effect: {:?}",
@@ -6930,6 +6966,7 @@ render pass",
                 sort_metadata_indices_buffer,
                 effects_meta.sort_metadata_indices_buffer.len(),
                 render_batch_metadata_buffer,
+                &pipeline_cache,
             ) {
                 error!(
                     "Failed to create mergesort-pass bind group @0 for ribbon effect: {:?}",
@@ -6946,6 +6983,7 @@ render pass",
                 effect_sort_metadata_buffer,
                 render_batch_descriptor_buffer,
                 render_batch_effect_index_buffer,
+                &pipeline_cache,
             ) {
                 error!(
                     "Failed to create sort-copy bind group @0 for ribbon effect: {:?}",
@@ -6961,7 +6999,7 @@ render pass",
         if !effect_instance.texture_layout.layout.is_empty() {
             // This should always be available, as this is cached into the render pipeline
             // just before we start specializing it.
-            let Some(material_bind_group_layout) =
+            let Some(material_bind_group_layout_descriptor) =
                 render_pipeline.get_material(&effect_instance.texture_layout)
             else {
                 error!(
@@ -7001,11 +7039,12 @@ render pass",
                 .or_insert_with(|| {
                     debug!("Creating material bind group for material {:?}", material);
                     render_device.create_bind_group(
-                        &format!(
+                        Some(&*format!(
                             "hanabi:material_bind_group_{}",
                             material.layout.layout.len()
-                        )[..],
-                        material_bind_group_layout,
+                        )),
+                        &pipeline_cache
+                            .get_bind_group_layout(material_bind_group_layout_descriptor),
                         &bind_group_entries[..],
                     )
                 });
@@ -7227,7 +7266,7 @@ fn draw<'w>(
 
             let indirect_draw_command_byte_offset = indirect_draw_command_offset as u64
                 * mem::size_of::<GpuIndexedIndirectDrawCommand>() as u64;
-            pass.set_index_buffer(index_buffer_slice.buffer.slice(..), 0, index_format);
+            pass.set_index_buffer(index_buffer_slice.buffer.slice(..), index_format);
             pass.multi_draw_indexed_indirect(
                 indirect_buffer,
                 indirect_draw_command_byte_offset,
@@ -7387,6 +7426,7 @@ impl Node for VfxSimulateDriverNode {
             crate::plugin::simulate_graph::HanabiSimulateGraph,
             vec![],
             None,
+            Some("hanabi:simulate_driver_node".to_string()),
         )?;
         Ok(())
     }
@@ -8410,10 +8450,9 @@ enum RenderBindGroupType {
     Transmissive,
 }
 
-fn create_view_bind_group_layout(
-    render_device: &RenderDevice,
+fn create_view_bind_group_layout_descriptor(
     bind_group_type: RenderBindGroupType,
-) -> BindGroupLayout {
+) -> BindGroupLayoutDescriptor {
     let mut entries = vec![
         // @group(0) @binding(0) var<uniform> view: View;
         BindGroupLayoutEntry {
@@ -8583,16 +8622,15 @@ fn create_view_bind_group_layout(
         }
     );
 
-    render_device.create_bind_group_layout(&*label, &entries)
+    BindGroupLayoutDescriptor::new(label, &entries)
 }
 
 // See `prepare_mesh_view_bind_groups` in
 // `bevy_pbr/src/render/mesh_view_bindings.rs`.
 fn create_view_bind_group(
     render_device: &RenderDevice,
-    images: &RenderAssets<GpuImage>,
-    fallback_images: &FallbackImage,
-    bind_group_layout: &BindGroupLayout,
+    pipeline_cache: &PipelineCache,
+    bind_group_layout_descriptor: &BindGroupLayoutDescriptor,
     view_binding: &BindingResource,
     maybe_pbr_view_data: Option<(
         &LightMeta,
@@ -8769,13 +8807,17 @@ fn create_view_bind_group(
         }
     );
 
-    Some(render_device.create_bind_group(&*label, bind_group_layout, &entries))
+    Some(render_device.create_bind_group(
+        &*label,
+        &pipeline_cache.get_bind_group_layout(bind_group_layout_descriptor),
+        &entries,
+    ))
 }
 
-fn create_render_particles_bind_group_layout(
+fn create_render_particles_bind_group_layout_descriptor(
     render_device: &RenderDevice,
     pbr: bool,
-) -> BindGroupLayout {
+) -> BindGroupLayoutDescriptor {
     let spawner_params_size =
         GpuSpawnerParams::aligned_size(render_device.limits().min_storage_buffer_offset_alignment);
 
@@ -8875,7 +8917,7 @@ fn create_render_particles_bind_group_layout(
         if pbr { "pbr" } else { "no_pbr" }
     );
 
-    render_device.create_bind_group_layout(&*label, &entries)
+    BindGroupLayoutDescriptor::new(label, &entries)
 }
 
 /// Adds a diffuse or specular texture view to the `texture_views` list, and

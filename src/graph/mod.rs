@@ -629,7 +629,7 @@ impl VectorValue {
     }
 
     /// Get the scalar value of an element of the vector.
-    pub fn value_mut(&mut self, index: usize) -> ScalarValueMut {
+    pub fn value_mut(&'_ mut self, index: usize) -> ScalarValueMut<'_> {
         match self.elem_type() {
             ScalarType::Bool => ScalarValueMut::Bool(self.get_mut::<bool>(index)),
             ScalarType::Float => ScalarValueMut::Float(self.get_mut::<f32>(index)),

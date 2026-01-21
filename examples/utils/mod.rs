@@ -183,46 +183,44 @@ fn spawn_demo_ui(mut cmd: Commands, demo: Res<Demo>) {
         DescPosition::LeftColumn => (Val::Vw(5.), Val::Vw(5.), Val::Auto, Val::Auto, Val::Vw(30.)),
         DescPosition::BottomRow => (Val::Vw(5.), Val::Auto, Val::Vw(5.), Val::Vw(5.), Val::Auto),
     };
-    cmd.spawn((
-        Node {
-            display: Display::Block,
-            position_type: PositionType::Absolute,
-            overflow: Overflow::clip(),
-            left,
-            top,
-            right,
-            bottom,
-            min_width: width,
-            width,
-            border: UiRect::all(Val::Px(1.)),
-            ..default()
-        },
-        BackgroundColor(Color::linear_rgba(0., 0., 0., 0.8)),
-        BorderColor::all(Color::linear_rgb(0.8, 0.8, 0.8)),
-        BorderRadius::all(Val::Px(8.)),
-        ZIndex(3000),
-        children![
-            (
-                Node {
-                    padding: UiRect::all(Val::Px(3.)),
-                    margin: UiRect::all(Val::Px(8.)),
-                    ..default()
-                },
-                Text::new(demo.name.clone()),
-                TextColor(Color::linear_rgb(1., 1., 1.)),
-                TextFont::from_font_size(18.),
-            ),
-            (
-                Node {
-                    padding: UiRect::all(Val::Px(3.)),
-                    margin: UiRect::all(Val::Px(8.)),
-                    ..default()
-                },
-                Text::new(demo.desc.clone()),
-                TextColor(Color::linear_rgb(0.8, 0.8, 0.8)),
-                TextFont::from_font_size(12.),
-            )
-        ],
-        UiTargetCamera(ui_camera),
-    ));
+    cmd.spawn(Node {
+        display: Display::Block,
+        position_type: PositionType::Absolute,
+        overflow: Overflow::clip(),
+        left,
+        top,
+        right,
+        bottom,
+        min_width: width,
+        width,
+        border: UiRect::all(Val::Px(1.)),
+        border_radius: BorderRadius::all(Val::Px(8.)),
+        ..default()
+    })
+    .insert(BackgroundColor(Color::linear_rgba(0., 0., 0., 0.8)))
+    .insert(BorderColor::all(Color::linear_rgb(0.8, 0.8, 0.8)))
+    .insert(ZIndex(3000))
+    .insert(children![
+        (
+            Node {
+                padding: UiRect::all(Val::Px(3.)),
+                margin: UiRect::all(Val::Px(8.)),
+                ..default()
+            },
+            Text::new(demo.name.clone()),
+            TextColor(Color::linear_rgb(1., 1., 1.)),
+            TextFont::from_font_size(18.),
+        ),
+        (
+            Node {
+                padding: UiRect::all(Val::Px(3.)),
+                margin: UiRect::all(Val::Px(8.)),
+                ..default()
+            },
+            Text::new(demo.desc.clone()),
+            TextColor(Color::linear_rgb(0.8, 0.8, 0.8)),
+            TextFont::from_font_size(12.),
+        )
+    ])
+    .insert(UiTargetCamera(ui_camera));
 }

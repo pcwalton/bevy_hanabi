@@ -32,11 +32,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let app_exit = DemoApp::new("puffs")
         .with_desc(DEMO_DESC)
         .build()
-        .insert_resource(AmbientLight {
-            color: Color::WHITE,
-            brightness: 500.0,
-            ..default()
-        })
         .add_systems(Startup, setup)
         .add_systems(Update, setup_scene_once_loaded)
         .run();
@@ -61,6 +56,11 @@ fn setup(
         Camera3d::default(),
         Tonemapping::None,
         Hdr,
+        AmbientLight {
+            color: Color::WHITE,
+            brightness: 500.0,
+            ..default()
+        },
     ));
 
     // Spawn the fox.
@@ -153,8 +153,7 @@ fn create_effect(mesh: Handle<Mesh>, effects: &mut Assets<EffectAsset>) -> Handl
     );
 
     // Add some nice shading to the particles.
-    let render_lambertian =
-        LambertianLightingModifier;
+    let render_lambertian = LambertianLightingModifier;
 
     let module = writer.finish();
 

@@ -1,7 +1,7 @@
 use std::{fmt::Debug, num::NonZeroU32, ops::Range};
 
 use bevy::{
-    ecs::entity::EntityHashMap,
+    ecs::entity::{EntityHashMap, EntityIndex},
     prelude::*,
     render::{render_resource::CachedComputePipelineId, sync_world::MainEntity},
 };
@@ -93,7 +93,7 @@ pub(crate) struct EffectInstance {
     /// batched into this single batch. Used to determine visibility per view.
     ///
     /// [`ParticleEffect`]: crate::ParticleEffect
-    pub entities: Vec<u32>,
+    pub entities: Vec<EntityIndex>,
     pub cached_effect_events: Option<CachedEffectEvents>,
     pub cached_mesh_location: Option<CachedMeshLocation>,
     pub position: Vec3,
@@ -156,11 +156,6 @@ pub(crate) struct EffectBatch {
 }
 
 impl SortedEffects {
-    pub fn clear(&mut self) {
-        self.instances.clear();
-        self.batches.clear();
-    }
-
     pub fn push(&mut self, effect_instance: EffectInstance) -> EffectInstanceIndex {
         let index = self.instances.len() as u32;
         self.instances.push(effect_instance);

@@ -11,7 +11,7 @@ use bevy::{
     prelude::Shader,
     render::{
         render_resource::{
-            BindGroup, BindGroupLayout, Buffer, BufferId, CachedComputePipelineId,
+            BindGroup, BindGroupLayoutDescriptor, Buffer, BufferId, CachedComputePipelineId,
             ComputePipelineDescriptor, PipelineCache, RawBufferVec, ShaderType,
         },
         renderer::{RenderDevice, RenderQueue},
@@ -102,19 +102,20 @@ pub struct SortBindGroups {
     sort_buffer: RawBufferVec<GpuSortKeyValuePair>,
     sort_temp_buffer: RawBufferVec<GpuSortKeyValuePair>,
     sort_indirect_batch_bind_groups: HashMap<SortIndirectBatchBindGroupKey, BindGroup>,
-    /// Bind group layouts for group #0 of the sort-fill compute pass.
-    sort_fill_bind_group_layouts:
-        HashMap<SortFillBindGroupLayoutKey, (BindGroupLayout, CachedComputePipelineId)>,
+    /// Bind group layout descriptors for group #0 of the sort-fill compute
+    /// pass.
+    sort_fill_bind_group_layout_descriptors:
+        HashMap<SortFillBindGroupLayoutKey, (BindGroupLayoutDescriptor, CachedComputePipelineId)>,
     /// Bind groups for group #0 of the sort-fill compute pass.
     sort_fill_bind_groups: Option<SortFillBindGroups>,
     /// Bind groups for group #0 of the mergesort init compute pass.
     mergesort_init_bind_groups: Option<SortMergesortInitBindGroups>,
     /// Bind groups for group #0 of the mergesort sort compute pass.
     mergesort_pass_bind_groups: Option<SortMergesortPassBindGroups>,
-    sort_indirect_batch_bind_group_layout: BindGroupLayout,
-    sort_copy_bind_group_layout: BindGroupLayout,
-    mergesort_init_bind_group_layout: BindGroupLayout,
-    mergesort_pass_bind_group_layout: BindGroupLayout,
+    sort_indirect_batch_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    sort_copy_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    mergesort_init_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
+    mergesort_pass_bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     sort_indirect_batch_pipeline_id: CachedComputePipelineId,
     /// Pipeline for mergesort init pass.
     mergesort_init_pipeline_id: CachedComputePipelineId,
@@ -178,7 +179,7 @@ impl SortBindGroups {
         let batch_descriptor_size =
             GpuRenderBatchDescriptor::aligned_size(min_storage_buffer_offset_alignment);
 
-        let sort_indirect_batch_bind_group_layout = render_device.create_bind_group_layout(
+        let sort_indirect_batch_bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:sort_indirect_batch",
             &[
                 // @group(0) @binding(0) var<uniform> batch_metadata :
@@ -271,7 +272,7 @@ impl SortBindGroups {
         let sort_indirect_batch_pipeline_id =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("hanabi:pipeline:sort_indirect_batch".into()),
-                layout: vec![sort_indirect_batch_bind_group_layout.clone()],
+                layout: vec![sort_indirect_batch_bind_group_layout_descriptor.clone()],
                 shader: sort_indirect_batch_shader,
                 // TODO: Do we need to put some common shader defs in here?
                 shader_defs: vec![],
@@ -280,7 +281,7 @@ impl SortBindGroups {
                 zero_initialize_workgroup_memory: false,
             });
 
-        let mergesort_init_bind_group_layout = render_device.create_bind_group_layout(
+        let mergesort_init_bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:sort_mergesort_init",
             &[
                 // @group(0) @binding(0) var<storage, read_write>
@@ -334,7 +335,7 @@ impl SortBindGroups {
             ],
         );
 
-        let mergesort_pass_bind_group_layout = render_device.create_bind_group_layout(
+        let mergesort_pass_bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:sort_mergesort_pass",
             &[
                 // @group(0) @binding(0) var<storage, read_write> sort_buffer_a
@@ -400,7 +401,7 @@ impl SortBindGroups {
             ],
         );
 
-        let sort_copy_bind_group_layout = render_device.create_bind_group_layout(
+        let sort_copy_bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
             "hanabi:bind_group_layout:sort_copy",
             &[
                 // @group(0) @binding(0) var<storage, read_write> indirect_index_buffer :
@@ -480,7 +481,7 @@ impl SortBindGroups {
         let mergesort_init_pipeline_id =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("hanabi:pipeline:sort_mergesort_init".into()),
-                layout: vec![mergesort_init_bind_group_layout.clone()],
+                layout: vec![mergesort_init_bind_group_layout_descriptor.clone()],
                 push_constant_ranges: vec![],
                 shader: mergesort_init_shader,
                 shader_defs: vec![],
@@ -491,7 +492,7 @@ impl SortBindGroups {
         let mergesort_pass_pipeline_id =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("hanabi:pipeline:sort_mergesort_pass".into()),
-                layout: vec![mergesort_pass_bind_group_layout.clone()],
+                layout: vec![mergesort_pass_bind_group_layout_descriptor.clone()],
                 push_constant_ranges: vec![PushConstantRange {
                     stages: ShaderStages::COMPUTE,
                     range: 0..4,
@@ -505,7 +506,7 @@ impl SortBindGroups {
         let sort_copy_pipeline_id =
             pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                 label: Some("hanabi:pipeline:sort_copy".into()),
-                layout: vec![sort_copy_bind_group_layout.clone()],
+                layout: vec![sort_copy_bind_group_layout_descriptor.clone()],
                 shader: sort_copy_shader,
                 shader_defs: vec![],
                 entry_point: Some("main".into()),
@@ -519,14 +520,14 @@ impl SortBindGroups {
             sort_buffer,
             sort_temp_buffer,
             sort_indirect_batch_bind_groups: default(),
-            sort_fill_bind_group_layouts: default(),
+            sort_fill_bind_group_layout_descriptors: default(),
             sort_fill_bind_groups: default(),
             mergesort_init_bind_groups: default(),
             mergesort_pass_bind_groups: default(),
-            sort_indirect_batch_bind_group_layout,
-            sort_copy_bind_group_layout,
-            mergesort_init_bind_group_layout,
-            mergesort_pass_bind_group_layout,
+            sort_indirect_batch_bind_group_layout_descriptor,
+            sort_copy_bind_group_layout_descriptor,
+            mergesort_init_bind_group_layout_descriptor,
+            mergesort_pass_bind_group_layout_descriptor,
             sort_indirect_batch_pipeline_id,
             mergesort_init_pipeline_id,
             mergesort_pass_pipeline_id,
@@ -555,14 +556,14 @@ impl SortBindGroups {
         }
     }
 
-    pub fn ensure_sort_fill_bind_group_layout(
+    pub fn ensure_sort_fill_bind_group_layout_descriptor(
         &mut self,
         pipeline_cache: &PipelineCache,
         particle_layout: &ParticleLayout,
-    ) -> Result<&BindGroupLayout, ()> {
+    ) -> Result<&BindGroupLayoutDescriptor, ()> {
         let key = SortFillBindGroupLayoutKey::from_particle_layout(particle_layout)?;
-        let (layout, _) = self
-            .sort_fill_bind_group_layouts
+        let (layout_descriptor, _) = self
+            .sort_fill_bind_group_layout_descriptors
             .entry(key)
             .or_insert_with(|| {
                 let storage_alignment = self
@@ -572,7 +573,7 @@ impl SortBindGroups {
                 let batch_descriptor_size =
                     GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
-                let bind_group_layout = self.render_device.create_bind_group_layout(
+                let bind_group_layout_descriptor = BindGroupLayoutDescriptor::new(
                     "hanabi:bind_group_layout:sort_fill",
                     &[
                         // @group(0) @binding(0) var<storage, read_write> pairs: array<KeyValuePair>;
@@ -663,29 +664,29 @@ impl SortBindGroups {
                 let pipeline_id =
                     pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
                         label: Some("hanabi:pipeline:sort_fill".into()),
-                        layout: vec![bind_group_layout.clone()],
+                        layout: vec![bind_group_layout_descriptor.clone()],
                         shader: self.sort_fill_shader.clone(),
                         shader_defs: vec![],
                         entry_point: Some("main".into()),
                         push_constant_ranges: vec![],
                         zero_initialize_workgroup_memory: false,
                     });
-                (bind_group_layout, pipeline_id)
+                (bind_group_layout_descriptor, pipeline_id)
             });
-        Ok(layout)
+        Ok(layout_descriptor)
     }
 
     // We currently only use the bind group layout internally in
     // ensure_sort_fill_bind_group()
     #[allow(dead_code)]
-    pub fn get_sort_fill_bind_group_layout(
+    pub fn get_sort_fill_bind_group_layout_descriptor(
         &self,
         particle_layout: &ParticleLayout,
-    ) -> Option<&BindGroupLayout> {
+    ) -> Option<&BindGroupLayoutDescriptor> {
         let key = SortFillBindGroupLayoutKey::from_particle_layout(particle_layout).ok()?;
-        self.sort_fill_bind_group_layouts
+        self.sort_fill_bind_group_layout_descriptors
             .get(&key)
-            .map(|(layout, _)| layout)
+            .map(|(layout_descriptor, _)| layout_descriptor)
     }
 
     pub fn get_sort_fill_pipeline_id(
@@ -693,7 +694,7 @@ impl SortBindGroups {
         particle_layout: &ParticleLayout,
     ) -> Option<CachedComputePipelineId> {
         let key = SortFillBindGroupLayoutKey::from_particle_layout(particle_layout).ok()?;
-        self.sort_fill_bind_group_layouts
+        self.sort_fill_bind_group_layout_descriptors
             .get(&key)
             .map(|(_, pipeline_id)| *pipeline_id)
     }
@@ -719,6 +720,7 @@ impl SortBindGroups {
         sort_dispatch_indirect_buffer: &Buffer,
         render_batch_descriptors_requiring_sorting_buffer: &Buffer,
         batch_metadata_buffer: &Buffer,
+        pipeline_cache: &PipelineCache,
     ) -> Result<&BindGroup, ()> {
         let key = SortIndirectBatchBindGroupKey {
             effect_metadata: effect_metadata_buffer.id(),
@@ -730,7 +732,9 @@ impl SortBindGroups {
             Entry::Vacant(entry) => {
                 entry.insert(self.render_device.create_bind_group(
                     "hanabi:bind_group:sort_indirect_batch",
-                    &self.sort_indirect_batch_bind_group_layout,
+                    &pipeline_cache.get_bind_group_layout(
+                        &self.sort_indirect_batch_bind_group_layout_descriptor,
+                    ),
                     &[
                         // @group(0) @binding(0) var<uniform> batch_metadata :
                         // BatchMetadata;
@@ -831,6 +835,7 @@ impl SortBindGroups {
         effect_sort_metadata: &Buffer,
         render_batch_descriptor_buffer: &Buffer,
         batch_effect_indices_buffer: &Buffer,
+        pipeline_cache: &PipelineCache,
     ) -> Result<&BindGroup, ()> {
         let sort_buffer = self
             .sort_buffer
@@ -877,10 +882,14 @@ impl SortBindGroups {
                 // borrowed. Doing a manual access to the layout one instead makes the compiler
                 // happy.
                 let key = SortFillBindGroupLayoutKey::from_particle_layout(particle_layout)?;
-                let layout = &self.sort_fill_bind_group_layouts.get(&key).ok_or(())?.0;
+                let layout_descriptor = &self
+                    .sort_fill_bind_group_layout_descriptors
+                    .get(&key)
+                    .ok_or(())?
+                    .0;
                 entry.insert(self.render_device.create_bind_group(
                     "hanabi:bind_group:sort_fill",
-                    layout,
+                    &pipeline_cache.get_bind_group_layout(layout_descriptor),
                     &[
                         // @group(0) @binding(0) var<storage, read_write> pairs:
                         // array<KeyValuePair>;
@@ -995,6 +1004,7 @@ impl SortBindGroups {
         sort_metadata_indices_count: usize,
         mergesort_dispatch_indirect_buffer: &Buffer,
         batch_metadata_buffer: &Buffer,
+        pipeline_cache: &PipelineCache,
     ) -> Result<&BindGroup, ()> {
         let mergesort_init_bind_groups =
             self.mergesort_init_bind_groups
@@ -1015,7 +1025,9 @@ impl SortBindGroups {
                 entry.insert(
                     self.render_device.create_bind_group(
                         "hanabi:bind_group:sort_mergesort_init",
-                        &self.mergesort_init_bind_group_layout,
+                        &pipeline_cache.get_bind_group_layout(
+                            &self.mergesort_init_bind_group_layout_descriptor,
+                        ),
                         &[
                             // @group(0) @binding(0) var<storage, read_write>
                             // effect_sort_metadata : array<EffectSortMetadata>;
@@ -1097,6 +1109,7 @@ impl SortBindGroups {
         sort_metadata_indices_buffer: &Buffer,
         sort_metadata_indices_count: usize,
         batch_metadata_buffer: &Buffer,
+        pipeline_cache: &PipelineCache,
     ) -> Result<&BindGroup, ()> {
         let (Some(sort_buffer), Some(sort_temp_buffer)) =
             (&self.sort_buffer.buffer(), &self.sort_temp_buffer.buffer())
@@ -1122,7 +1135,9 @@ impl SortBindGroups {
                 entry.insert(
                     self.render_device.create_bind_group(
                         "hanabi:bind_group:sort_mergesort_pass",
-                        &self.mergesort_pass_bind_group_layout,
+                        &pipeline_cache.get_bind_group_layout(
+                            &self.mergesort_pass_bind_group_layout_descriptor,
+                        ),
                         &[
                             // @group(0) @binding(0) var<storage, read_write>
                             // sort_buffer_a : array<KeyValuePair>;
@@ -1212,6 +1227,7 @@ impl SortBindGroups {
         effect_sort_metadata_buffer: &Buffer,
         render_batch_descriptor_buffer: &Buffer,
         batch_effect_indices_buffer: &Buffer,
+        pipeline_cache: &PipelineCache,
     ) -> Result<&BindGroup, ()> {
         let sort_buffer = self
             .sort_buffer
@@ -1252,71 +1268,74 @@ impl SortBindGroups {
                 let render_batch_descriptor_size =
                     GpuRenderBatchDescriptor::aligned_size(storage_alignment);
 
-                entry.insert(self.render_device.create_bind_group(
-                    "hanabi:bind_group:sort_copy",
-                    &self.sort_copy_bind_group_layout,
-                    &[
-                        // @group(0) @binding(0) var<storage, read_write> indirect_index_buffer
-                        // : IndirectIndexBuffer;
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: indirect_index_buffer,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(1) var<storage, read> sort_buffer : SortBuffer;
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: sort_buffer,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(2) var<storage, read> effect_metadata :
-                        // EffectMetadata;
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: effect_metadata_buffer,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(3) var<storage, read>
-                        // batch_descriptor : BatchDescriptor;
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: render_batch_descriptor_buffer,
-                                offset: 0,
-                                size: Some(render_batch_descriptor_size),
-                            }),
-                        },
-                        // @group(0) @binding(4) var<storage, read>
-                        // batch_effect_indices : array<BatchEffectIndices>;
-                        BindGroupEntry {
-                            binding: 4,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: batch_effect_indices_buffer,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                        // @group(0) @binding(5) var<storage, read>
-                        // effect_sort_metadata : EffectSortMetadata;
-                        BindGroupEntry {
-                            binding: 5,
-                            resource: BindingResource::Buffer(BufferBinding {
-                                buffer: effect_sort_metadata_buffer,
-                                offset: 0,
-                                size: None,
-                            }),
-                        },
-                    ],
-                ))
+                entry.insert(
+                    self.render_device.create_bind_group(
+                        "hanabi:bind_group:sort_copy",
+                        &pipeline_cache
+                            .get_bind_group_layout(&self.sort_copy_bind_group_layout_descriptor),
+                        &[
+                            // @group(0) @binding(0) var<storage, read_write> indirect_index_buffer
+                            // : IndirectIndexBuffer;
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: indirect_index_buffer,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(1) var<storage, read> sort_buffer : SortBuffer;
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: sort_buffer,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(2) var<storage, read> effect_metadata :
+                            // EffectMetadata;
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: effect_metadata_buffer,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(3) var<storage, read>
+                            // batch_descriptor : BatchDescriptor;
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: render_batch_descriptor_buffer,
+                                    offset: 0,
+                                    size: Some(render_batch_descriptor_size),
+                                }),
+                            },
+                            // @group(0) @binding(4) var<storage, read>
+                            // batch_effect_indices : array<BatchEffectIndices>;
+                            BindGroupEntry {
+                                binding: 4,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: batch_effect_indices_buffer,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                            // @group(0) @binding(5) var<storage, read>
+                            // effect_sort_metadata : EffectSortMetadata;
+                            BindGroupEntry {
+                                binding: 5,
+                                resource: BindingResource::Buffer(BufferBinding {
+                                    buffer: effect_sort_metadata_buffer,
+                                    offset: 0,
+                                    size: None,
+                                }),
+                            },
+                        ],
+                    ),
+                )
             }
         };
         Ok(bind_group)
