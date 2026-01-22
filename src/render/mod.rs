@@ -1974,6 +1974,10 @@ pub(crate) struct ExtractedEffect {
     pub alpha_mode: AlphaMode,
     /// Effect shaders.
     pub effect_shaders: EffectShader,
+    /// Whether the effect is active.
+    ///
+    /// Inactive effects are usually invisible ones.
+    pub active: bool,
 }
 
 pub struct AddedEffectParent {
@@ -2132,9 +2136,10 @@ type EffectExtractionQuery<'w> = (
 /// components.
 ///
 /// Extract rendering data for all [`ParticleEffect`] components in the world
-/// which are visible ([`ComputedVisibility::is_visible`] is `true`), and wrap
-/// the data into a new [`ExtractedEffect`] instance added to the
-/// [`ExtractedEffects`] resource.
+/// and wrap the data into a new [`ExtractedEffect`] instance added to the
+/// [`ExtractedEffects`] resource. The invariant is that any entity in the main
+/// world that has a `CompiledParticleEffect` instance has a corresponding
+/// render world instance.
 ///
 /// This system runs in parallel of [`extract_effect_events`].
 ///
@@ -2146,7 +2151,6 @@ type EffectExtractionQuery<'w> = (
 /// [`ParticleEffect`]: crate::ParticleEffect
 #[allow(unsafe_code)]
 pub(crate) fn extract_effects(
-    mut commands: Commands,
     real_time: Extract<Res<Time<Real>>>,
     virtual_time: Extract<Res<Time<Virtual>>>,
     time: Extract<Res<Time<EffectSimulation>>>,
@@ -2242,13 +2246,10 @@ pub(crate) fn extract_effects(
         let Ok((_, render_entity, _, _, _, compiled_effect, _, _)) =
             q_all_effects.get(main_entity.id())
         else {
-            trace!(
+            error!(
                 "Required components weren't available for newly-added effect {:?}",
                 main_entity
             );
-            extracted_effects
-                .effects_pending_addition
-                .insert(main_entity);
             continue;
         };
 
@@ -2361,9 +2362,19 @@ pub(crate) fn extract_effects(
         if q_all_effects.contains(*main_entity) {
             continue;
         }
-        extracted_effects.effects.remove(&main_entity);
-        commands.entity(*main_entity).remove::<CachedEffect>();
-        extracted_effects.dirty = true;
+
+        extracted_effects
+            .effects_pending_addition
+            .remove(&main_entity);
+        extracted_effects
+            .effects_pending_update
+            .remove(&main_entity);
+
+        if let Some(_) = extracted_effects.effects.remove(&main_entity) {
+            // No need to despawn the entity, as it has `SyncToRenderWorld` on
+            // it, so Bevy will do it automatically.
+            extracted_effects.dirty = true;
+        };
     }
 }
 
@@ -2385,16 +2396,6 @@ fn extract_effect(
 
     // Check if shaders are configured
     let effect_shaders = compiled_effect.get_configured_shaders()?;
-
-    // Check if hidden, unless always simulated
-    if compiled_effect.simulation_condition == SimulationCondition::WhenVisible
-        && !maybe_inherited_visibility
-            .map(|cv| cv.get())
-            .unwrap_or(true)
-        && !maybe_view_visibility.map(|cv| cv.get()).unwrap_or(true)
-    {
-        return None;
-    }
 
     // Check if asset is available, otherwise silently ignore
     let Some(asset) = effects.get(&compiled_effect.asset) else {
@@ -2443,14 +2444,20 @@ fn extract_effect(
     //     .unwrap_or(default_mesh.0.clone());
     let alpha_mode = compiled_effect.alpha_mode;
 
+    let active = compiled_effect.simulation_condition == SimulationCondition::Always
+        || maybe_inherited_visibility.is_some_and(|cv| cv.get())
+        || maybe_view_visibility.is_some_and(|cv| cv.get());
+
     trace!(
-        "Extracted instance of effect '{}' on entity {:?} (render entity {:?}): texture_layout_count={} texture_count={} layout_flags={:?}",
+        "Extracted instance of effect '{}' on entity {:?} (render entity {:?}): \
+         texture_layout_count={} texture_count={} layout_flags={:?}, active={:?}",
         asset.name,
         main_entity,
         render_entity.id(),
         texture_layout.layout.len(),
         compiled_effect.textures.len(),
         layout_flags,
+        active
     );
 
     Some(ExtractedEffect {
@@ -2469,6 +2476,7 @@ fn extract_effect(
         luts: asset.luts.clone(),
         alpha_mode,
         effect_shaders: effect_shaders.clone(),
+        active,
     })
 }
 
@@ -4252,6 +4260,17 @@ pub(crate) fn batch_effects(
         let Some(input) = prepared_effects.effects.get(main_entity) else {
             continue;
         };
+
+        // Skip inactive effects.
+        if extracted_effects
+            .effects
+            .get(main_entity)
+            .is_none_or(|extracted_effect| !extracted_effect.active)
+        {
+            trace!("Not sorting {:?} as it's inactive", main_entity);
+            continue;
+        }
+
         effect_sorter.effects.push(EffectToBeSorted {
             entity,
             buffer_index: input.effect_slice.buffer_index,

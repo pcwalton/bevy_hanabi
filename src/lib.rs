@@ -653,7 +653,8 @@ pub struct EffectVisibilityClass;
     Transform,
     Visibility,
     VisibilityClass,
-    SyncToRenderWorld
+    SyncToRenderWorld,
+    SpawnCount
 )]
 #[component(on_add = bevy::camera::visibility::add_visibility_class::<EffectVisibilityClass>)]
 pub struct ParticleEffect {

@@ -894,14 +894,14 @@ pub fn tick_spawners(
         &ParticleEffect,
         &InheritedVisibility,
         Option<&mut EffectSpawner>,
-        Option<&mut SpawnCount>,
+        &mut SpawnCount,
     )>,
 ) {
     trace!("tick_spawners()");
 
     let dt = time.delta_secs();
 
-    for (entity, effect, inherited_visibility, maybe_spawner, maybe_spawn_count) in query.iter_mut()
+    for (entity, effect, inherited_visibility, maybe_spawner, mut spawn_count) in query.iter_mut()
     {
         let Some(asset) = effects.get(&effect.handle) else {
             trace!(
@@ -923,14 +923,10 @@ pub fn tick_spawners(
 
         if let Some(mut effect_spawner) = maybe_spawner {
             let new_spawn_count = effect_spawner.tick(dt, &mut rng.0);
-            if let Some(mut spawn_count) = maybe_spawn_count {
-                // This if is important for change detection!
-                if *spawn_count != new_spawn_count {
-                    *spawn_count = new_spawn_count;
-                }
-                continue;
+            // This condition is important for change detection!
+            if *spawn_count != new_spawn_count {
+                *spawn_count = new_spawn_count;
             }
-            commands.entity(entity).insert(new_spawn_count);
             continue;
         }
 
@@ -1322,7 +1318,7 @@ mod test {
                         &InheritedVisibility,
                         &ParticleEffect,
                         Option<&EffectSpawner>,
-                        Option<&SpawnCount>,
+                        &SpawnCount,
                     )>()
                     .iter(world)
                     .next()
@@ -1364,7 +1360,7 @@ mod test {
                         Entity,
                         &ParticleEffect,
                         Option<&EffectSpawner>,
-                        Option<&SpawnCount>,
+                        &SpawnCount,
                     )>()
                     .iter(world)
                     .next()
