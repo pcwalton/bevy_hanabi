@@ -1674,11 +1674,19 @@ pub(crate) struct ParticleRenderPipelineKey {
     /// feature.
     #[cfg(all(feature = "2d", feature = "3d"))]
     pipeline_mode: PipelineMode,
-    view_is_pbr: bool,
+    view_type: RenderViewType,
     /// MSAA sample count.
     msaa_samples: u32,
     /// Is the camera using an HDR render target?
     hdr: bool,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
+pub enum RenderViewType {
+    #[default]
+    NonPbr,
+    Pbr,
+    Transmissive,
 }
 
 #[derive(Clone, Copy, Default, Hash, PartialEq, Eq, Debug)]
@@ -1711,7 +1719,7 @@ impl Default for ParticleRenderPipelineKey {
             needs_normal: false,
             needs_particle_fragment: false,
             ribbons: false,
-            view_is_pbr: false,
+            view_type: default(),
             emits_raw_positions: false,
             #[cfg(all(feature = "2d", feature = "3d"))]
             pipeline_mode: PipelineMode::Camera3d,
@@ -1728,21 +1736,22 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
         trace!("Specializing render pipeline for key: {key:?}");
 
         trace!("Fetching layout for bind group particle@1 of render pass");
-        let particle_bind_group_layout = if key.view_is_pbr {
-            self.render_particles_pbr_bind_group_layout_descriptor
-                .clone()
-        } else {
-            self.render_particles_no_pbr_bind_group_layout_descriptor
-                .clone()
+        let particle_bind_group_layout = match key.view_type {
+            RenderViewType::Pbr | RenderViewType::Transmissive => self
+                .render_particles_pbr_bind_group_layout_descriptor
+                .clone(),
+            RenderViewType::NonPbr => self
+                .render_particles_no_pbr_bind_group_layout_descriptor
+                .clone(),
         };
 
         let mut layout: Vec<BindGroupLayoutDescriptor> = vec![];
-        if key.alpha_mask == ParticleRenderAlphaMaskPipelineKey::Transmissive {
-            layout.push(self.view_transmissive_layout_descriptor.clone());
-        } else if key.view_is_pbr {
-            layout.push(self.view_pbr_layout_descriptor.clone());
-        } else {
-            layout.push(self.view_no_pbr_layout_descriptor.clone());
+        match key.view_type {
+            RenderViewType::NonPbr => layout.push(self.view_no_pbr_layout_descriptor.clone()),
+            RenderViewType::Pbr => layout.push(self.view_pbr_layout_descriptor.clone()),
+            RenderViewType::Transmissive => {
+                layout.push(self.view_transmissive_layout_descriptor.clone())
+            }
         }
         layout.push(particle_bind_group_layout);
         layout.push(self.effect_metadata_bind_group_layout_descriptor.clone());
@@ -2502,10 +2511,11 @@ pub struct EffectsMeta {
     /// other uniform values related to the camera.
     ///
     /// This is only for 2D views.
-    view_2d_bind_group: Option<BindGroup>,
+    view_non_pbr_bind_group: Option<BindGroup>,
     /// Maps each camera view render entity to the 3D view bind group for that
     /// camera.
     view_pbr_bind_groups: EntityHashMap<BindGroup>,
+    view_transmissive_bind_groups: EntityHashMap<BindGroup>,
     /// Bind group #0 of the vfx_indirect shader, for the simulation parameters
     /// like the current time and frame delta time.
     indirect_sim_params_bind_group: Option<BindGroup>,
@@ -2628,8 +2638,9 @@ impl EffectsMeta {
         batch_descriptor_buffer.set_label(Some("hanabi:buffer:batch_descriptor"));
 
         Self {
-            view_2d_bind_group: None,
+            view_non_pbr_bind_group: None,
             view_pbr_bind_groups: EntityHashMap::default(),
+            view_transmissive_bind_groups: EntityHashMap::default(),
             indirect_sim_params_bind_group: None,
             indirect_metadata_bind_group: None,
             indirect_spawner_bind_group: None,
@@ -5369,8 +5380,7 @@ fn emit_sorted_draw<T, F>(
     render_meshes: &RenderAssets<RenderMesh>,
     pipeline_cache: &PipelineCache,
     make_phase_item: F,
-    transmissive: bool,
-    view_is_pbr: bool,
+    view_type: RenderViewType,
     #[cfg(all(feature = "2d", feature = "3d"))] pipeline_mode: PipelineMode,
 ) where
     T: SortedPhaseItem,
@@ -5445,11 +5455,11 @@ fn emit_sorted_draw<T, F>(
             let effect_is_transmissive = effect_instance
                 .layout_flags
                 .contains(LayoutFlags::TRANSMISSIVE);
-            if transmissive != effect_is_transmissive {
+            if matches!(view_type, RenderViewType::Transmissive) != effect_is_transmissive {
                 trace!(
                     "Not rendering because the current pass doesn't match the effect's \
                     transmissiveness (pass: {:?}, effect: {:?})",
-                    transmissive,
+                    matches!(view_type, RenderViewType::Transmissive),
                     effect_is_transmissive,
                 );
                 continue;
@@ -5539,7 +5549,7 @@ fn emit_sorted_draw<T, F>(
                     needs_normal,
                     needs_particle_fragment,
                     ribbons,
-                    view_is_pbr,
+                    view_type,
                     emits_raw_positions,
                     #[cfg(all(feature = "2d", feature = "3d"))]
                     pipeline_mode,
@@ -5585,7 +5595,7 @@ fn emit_binned_draw<T, F, G>(
     #[cfg(all(feature = "2d", feature = "3d"))] pipeline_mode: PipelineMode,
     alpha_mask: ParticleRenderAlphaMaskPipelineKey,
     change_tick: &mut Tick,
-    view_is_pbr: bool,
+    view_type: RenderViewType,
 ) where
     T: BinnedPhaseItem,
     F: Fn(CachedRenderPipelineId, &EffectDrawBatch, &ExtractedView) -> T::BatchSetKey,
@@ -5734,7 +5744,7 @@ fn emit_binned_draw<T, F, G>(
                     needs_particle_fragment,
                     ribbons,
                     emits_raw_positions,
-                    view_is_pbr,
+                    view_type,
                     #[cfg(all(feature = "2d", feature = "3d"))]
                     pipeline_mode,
                     msaa_samples: msaa.samples(),
@@ -5860,8 +5870,10 @@ pub(crate) fn queue_effects(
                     extra_index: PhaseItemExtraIndex::None,
                     indexed: true, // ???
                 },
-                /*transmissive=*/ false,
-                /*world_has_lights=*/ maybe_light_meta.is_some(),
+                match maybe_light_meta {
+                    Some(_) => RenderViewType::Pbr,
+                    None => RenderViewType::NonPbr,
+                },
                 #[cfg(feature = "3d")]
                 PipelineMode::Camera2d,
             );
@@ -5905,15 +5917,17 @@ pub(crate) fn queue_effects(
                     extra_index: PhaseItemExtraIndex::None,
                     indexed: true, // FIXME: This depends on the mesh.
                 },
-                /*transmissive=*/ false,
-                /*world_has_lights=*/ maybe_light_meta.is_some(),
+                match maybe_light_meta {
+                    Some(_) => RenderViewType::Pbr,
+                    None => RenderViewType::NonPbr,
+                },
                 #[cfg(feature = "2d")]
                 PipelineMode::Camera3d,
             );
         }
 
         // Transmissive effects
-        if !views.is_empty() {
+        if !views.is_empty() && maybe_light_meta.is_some() {
             use bevy::core_pipeline::core_3d::Transmissive3d;
 
             trace!("Emit effect draw calls for transmissive 3D views...");
@@ -5945,8 +5959,7 @@ pub(crate) fn queue_effects(
                     extra_index: PhaseItemExtraIndex::None,
                     indexed: true, // FIXME: This depends on the mesh.
                 },
-                /*transmissive=*/ true,
-                /*world_has_lights=*/ maybe_light_meta.is_some(),
+                RenderViewType::Transmissive,
                 #[cfg(feature = "2d")]
                 PipelineMode::Camera3d,
             );
@@ -5990,7 +6003,10 @@ pub(crate) fn queue_effects(
                 PipelineMode::Camera3d,
                 ParticleRenderAlphaMaskPipelineKey::AlphaMask,
                 &mut change_tick,
-                /*world_has_lights=*/ maybe_light_meta.is_some(),
+                match maybe_light_meta {
+                    Some(_) => RenderViewType::Pbr,
+                    None => RenderViewType::NonPbr,
+                },
             );
         }
 
@@ -6033,7 +6049,10 @@ pub(crate) fn queue_effects(
                 PipelineMode::Camera3d,
                 ParticleRenderAlphaMaskPipelineKey::Opaque,
                 &mut change_tick,
-                /*world_has_lights=*/ maybe_light_meta.is_some(),
+                match maybe_light_meta {
+                    Some(_) => RenderViewType::Pbr,
+                    None => RenderViewType::NonPbr,
+                },
             );
         }
     }
@@ -6082,7 +6101,7 @@ pub(crate) fn prepare_gpu_resources(
 
     // Create the bind group for the camera/view parameters
     // FIXME - Not here!
-    effects_meta.view_2d_bind_group = create_view_bind_group(
+    effects_meta.view_non_pbr_bind_group = create_view_bind_group(
         &render_device,
         &pipeline_cache,
         &render_pipeline.view_no_pbr_layout_descriptor,
@@ -6097,6 +6116,7 @@ pub(crate) fn prepare_gpu_resources(
 
     // Create the bind groups for all 3D views.
     effects_meta.view_pbr_bind_groups.clear();
+    effects_meta.view_transmissive_bind_groups.clear();
     if let (Some(light_meta), Some(clusterable_object_meta), Some(shadow_samplers)) = (
         &maybe_light_meta,
         &maybe_clusterable_object_meta,
@@ -6105,32 +6125,48 @@ pub(crate) fn prepare_gpu_resources(
         for (view, view_shadow_bindings, view_cluster_bindings, maybe_view_transmission_texture) in
             &q_pbr_views
         {
-            let layout = if maybe_view_transmission_texture.is_some() {
-                &render_pipeline.view_transmissive_layout_descriptor
-            } else {
-                &render_pipeline.view_pbr_layout_descriptor
-            };
+            let pbr_view_data = (
+                &**light_meta,
+                &**clusterable_object_meta,
+                &**shadow_samplers,
+                &*view_shadow_bindings,
+                &*view_cluster_bindings,
+            );
             if let Some(view_bind_group) = create_view_bind_group(
                 &render_device,
                 &pipeline_cache,
-                layout,
+                &render_pipeline.view_pbr_layout_descriptor,
                 &view_binding,
-                Some((
-                    light_meta,
-                    clusterable_object_meta,
-                    shadow_samplers,
-                    view_shadow_bindings,
-                    view_cluster_bindings,
-                )),
+                Some(pbr_view_data),
                 &effects_meta,
                 &globals,
                 &light_probes,
                 &environment_maps,
-                maybe_view_transmission_texture,
+                None,
             ) {
                 effects_meta
                     .view_pbr_bind_groups
                     .insert(view, view_bind_group);
+            }
+
+            // Create the transmissive bind group if we need to.
+            if let Some(view_transmission_texture) = maybe_view_transmission_texture {
+                if let Some(view_bind_group) = create_view_bind_group(
+                    &render_device,
+                    &pipeline_cache,
+                    &render_pipeline.view_transmissive_layout_descriptor,
+                    &view_binding,
+                    Some(pbr_view_data),
+                    &effects_meta,
+                    &globals,
+                    &light_probes,
+                    &environment_maps,
+                    Some(view_transmission_texture),
+                ) {
+                    effects_meta
+                        .view_transmissive_bind_groups
+                        .insert(view, view_bind_group);
+                }
             }
         }
     }
@@ -7094,6 +7130,7 @@ fn draw<'w>(
     view: Entity,
     entity: (Entity, MainEntity),
     pipeline_id: CachedRenderPipelineId,
+    view_type: RenderViewType,
     params: &mut DrawEffectsSystemState,
 ) {
     let (
@@ -7159,15 +7196,24 @@ fn draw<'w>(
     // View properties (camera matrix, etc.)
     let mut view_dynamic_offsets: ArrayVec<u32, 4> = ArrayVec::new();
     view_dynamic_offsets.push(view_uniform_offset.offset);
-    if effect_instance
-        .layout_flags
-        .contains(LayoutFlags::TRANSMISSIVE)
-        || maybe_view_lights_uniform_offset.is_some()
-    {
-        let Some(view_bind_group) = effects_meta.view_pbr_bind_groups.get(&view) else {
-            error!("No 3D bind group available for view {:?}", view);
-            return;
-        };
+
+    // Push the appropriate view bind group.
+    let maybe_view_bind_group = match view_type {
+        RenderViewType::NonPbr => effects_meta.view_non_pbr_bind_group.as_ref(),
+        RenderViewType::Pbr => effects_meta.view_pbr_bind_groups.get(&view),
+        RenderViewType::Transmissive => effects_meta.view_transmissive_bind_groups.get(&view),
+    };
+    let Some(view_bind_group) = maybe_view_bind_group else {
+        error!(
+            "No {:?} bind group available for view {:?}",
+            view_type, view
+        );
+        return;
+    };
+    if matches!(
+        view_type,
+        RenderViewType::Pbr | RenderViewType::Transmissive
+    ) {
         if let (
             Some(view_lights_uniform_offset),
             Some(view_light_probes_uniform_offset),
@@ -7181,11 +7227,8 @@ fn draw<'w>(
             view_dynamic_offsets.push(**view_light_probes_uniform_offset);
             view_dynamic_offsets.push(**view_environment_map_uniform_offset);
         }
-        pass.set_bind_group(0, view_bind_group, &view_dynamic_offsets);
-    } else {
-        let view_bind_group = effects_meta.view_2d_bind_group.as_ref().unwrap();
-        pass.set_bind_group(0, view_bind_group, &view_dynamic_offsets);
     }
+    pass.set_bind_group(0, view_bind_group, &view_dynamic_offsets);
 
     // Particles buffer
     let spawner_buffer_aligned = effects_meta.spawner_buffer.aligned_size();
@@ -7308,6 +7351,7 @@ impl Draw<Transparent2d> for DrawEffects {
             view,
             item.entity,
             item.pipeline,
+            RenderViewType::NonPbr,
             &mut self.params,
         );
         Ok(())
@@ -7330,6 +7374,7 @@ impl Draw<Transparent3d> for DrawEffects {
             view,
             item.entity,
             item.pipeline,
+            RenderViewType::Pbr,
             &mut self.params,
         );
         Ok(())
@@ -7352,6 +7397,7 @@ impl Draw<Transmissive3d> for DrawEffects {
             view,
             item.entity,
             item.pipeline,
+            RenderViewType::Transmissive,
             &mut self.params,
         );
         Ok(())
@@ -7374,6 +7420,7 @@ impl Draw<AlphaMask3d> for DrawEffects {
             view,
             item.representative_entity,
             item.batch_set_key.pipeline,
+            RenderViewType::Pbr,
             &mut self.params,
         );
         Ok(())
@@ -7396,6 +7443,7 @@ impl Draw<Opaque3d> for DrawEffects {
             view,
             item.representative_entity,
             item.batch_set_key.pipeline,
+            RenderViewType::Pbr,
             &mut self.params,
         );
         Ok(())
