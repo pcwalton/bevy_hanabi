@@ -601,6 +601,16 @@ impl Module {
         self.push(Expr::Cast(expr))
     }
 
+    #[inline]
+    pub fn lut_sample(&mut self, index: u32, coords: ExprHandle) -> ExprHandle {
+        self.push(Expr::LutSample { index, coords })
+    }
+
+    #[inline]
+    pub fn lut_dimensions(&mut self, index: u32) -> ExprHandle {
+        self.push(Expr::LutDimensions { index })
+    }
+
     /// Get an existing expression from its handle.
     #[inline]
     pub fn get(&self, expr: ExprHandle) -> Option<&Expr> {
@@ -885,6 +895,9 @@ pub enum Expr {
 
     /// Access to LUT textures.
     LutSample { index: u32, coords: ExprHandle },
+
+    /// Dimensions of LUT textures.
+    LutDimensions { index: u32 },
 }
 
 impl Expr {
@@ -930,8 +943,12 @@ impl Expr {
                 ..
             } => module.is_const(*first) && module.is_const(*second) && module.is_const(*third),
             Expr::Cast(expr) => module.is_const(expr.inner),
-            Expr::TextureSample(_) => false,
-            Expr::LutSample { .. } => false,
+            Expr::TextureSample(_) | Expr::LutSample { .. } => false,
+            Expr::LutDimensions { .. } => {
+                // FIXME(pcwalton): These are maybe constant? The module doesn't
+                // know their value, but the effect asset does…
+                false
+            }
         }
     }
 
@@ -955,6 +972,7 @@ impl Expr {
             Expr::Cast(_) => false,
             Expr::TextureSample(_) => false,
             Expr::LutSample { .. } => false,
+            Expr::LutDimensions { .. } => false,
         }
     }
 
@@ -990,6 +1008,7 @@ impl Expr {
             Expr::Cast(expr) => Some(expr.value_type()),
             Expr::TextureSample(expr) => Some(expr.value_type()),
             Expr::LutSample { .. } => None,
+            Expr::LutDimensions { .. } => Some(VectorType::VEC2U.into()),
         }
     }
 
@@ -1166,6 +1185,7 @@ impl Expr {
                 "textureSampleLevel(lut_texture_{index}, lut_sampler_{index}, {}, 0.0)",
                 context.eval(module, *coords)?
             )),
+            Expr::LutDimensions { index } => Ok(format!("textureDimensions(lut_texture_{index})")),
         }
     }
 }

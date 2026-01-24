@@ -2370,7 +2370,7 @@ pub(crate) fn extract_effects(
             .effects_pending_update
             .remove(&main_entity);
 
-        if let Some(_) = extracted_effects.effects.remove(&main_entity) {
+        if extracted_effects.effects.remove(&main_entity).is_some() {
             // No need to despawn the entity, as it has `SyncToRenderWorld` on
             // it, so Bevy will do it automatically.
             extracted_effects.dirty = true;
