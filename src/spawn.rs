@@ -901,8 +901,7 @@ pub fn tick_spawners(
 
     let dt = time.delta_secs();
 
-    for (entity, effect, inherited_visibility, maybe_spawner, mut spawn_count) in query.iter_mut()
-    {
+    for (entity, effect, inherited_visibility, maybe_spawner, mut spawn_count) in query.iter_mut() {
         let Some(asset) = effects.get(&effect.handle) else {
             trace!(
                 "Effect asset with handle {:?} is not available; skipped initializers tick.",
@@ -1356,12 +1355,7 @@ mod test {
                 // Always-simulated effect (SimulationCondition::Always)
 
                 let (entity, particle_effect, effect_spawners, spawn_counts) = world
-                    .query::<(
-                        Entity,
-                        &ParticleEffect,
-                        Option<&EffectSpawner>,
-                        &SpawnCount,
-                    )>()
+                    .query::<(Entity, &ParticleEffect, Option<&EffectSpawner>, &SpawnCount)>()
                     .iter(world)
                     .next()
                     .unwrap();

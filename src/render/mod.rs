@@ -8080,7 +8080,7 @@ impl Node for VfxSimulateNode {
                 let effect_metadata_buffer = effects_meta.effect_metadata_buffer.buffer().unwrap();
 
                 // Create the indirect dispatch commands
-                {
+                if !sorted_effect_batches.batches.is_empty() {
                     compute_pass.push_debug_group("hanabi:sort_indirect_batch");
 
                     // Fetch compute pipeline
