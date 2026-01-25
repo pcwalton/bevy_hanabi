@@ -351,15 +351,15 @@ impl EffectBuffer {
                 resource: parent_binding,
             });
         }
-        for lut in &luts.images {
+        for (lut_index, lut) in luts.images.iter().enumerate() {
             let gpu_image = gpu_images.get(lut).unwrap_or(&fallback_images.d2);
             entries.extend([
                 BindGroupEntry {
-                    binding: 3,
+                    binding: lut_index as u32 * 2 + 3,
                     resource: BindingResource::TextureView(&gpu_image.texture_view),
                 },
                 BindGroupEntry {
-                    binding: 4,
+                    binding: lut_index as u32 * 2 + 4,
                     resource: BindingResource::Sampler(&gpu_image.sampler),
                 },
             ])

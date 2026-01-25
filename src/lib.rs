@@ -1010,6 +1010,11 @@ fn append_spawn_events_{0}(effect_metadata_index: u32, particle_index: u32, coun
             .any(|render_modifier| render_modifier.reads_view_transmission_texture());
         layout_flags.set(LayoutFlags::TRANSMISSIVE, transmissive);
 
+        let pbr = asset
+            .render_modifiers()
+            .any(|render_modifier| render_modifier.is_pbr());
+        layout_flags.set(LayoutFlags::PBR, pbr);
+
         if particle_layout.contains(Attribute::RIBBON_ID) {
             layout_flags |= LayoutFlags::RIBBONS;
         }

@@ -572,6 +572,10 @@ pub trait RenderModifier: Modifier {
     fn emits_raw_positions(&self) -> bool {
         false
     }
+
+    fn is_pbr(&self) -> bool {
+        false
+    }
 }
 
 impl Clone for Box<dyn RenderModifier> {
