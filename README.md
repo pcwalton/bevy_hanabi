@@ -6,11 +6,15 @@ Hanabi is a capable system, but performance and other limitations prevent its us
 
 * *Batching*: Hanabi-Batched batches together many instances of the same effect, dramatically improving performance with many particle systems.
 
-* *Additional performance improvements*: Hanabi-Batched features other, more localized, optimizations. For example, instead of using insertion sort for ribbon sorting, it uses heapsort, making ribbons usable in many more scenarios.
+* *Additional performance improvements*: Hanabi-Batched features other, more localized, optimizations. For example, instead of using insertion sort for ribbon sorting, it uses GPU mergesort, making ribbons usable in many more scenarios.
 
-* *More expression features*: More functionality is available in expressions, such as [`select`](https://www.w3.org/TR/WGSL/#select-builtin).
+* *More expression features*: More functionality is available in expressions, such as [`select`](https://www.w3.org/TR/WGSL/#select-builtin) and quaternion functions.
 
-* *Support for Bevy 0.17*.
+* *PBR particles*: Mesh particles can render with full PBR lighting.
+
+* *Lookup textures (LUTs)*: You can supply 2D textures to the init, update, and render phases and sample them in expressions. This is useful for evaluating curves in an efficient manner, displacing particles with a vector field, and many other effects.
+
+* *Support for Bevy 0.18*.
 
 Hanabi-Batched intends to provide a compatible API to Hanabi, making it a drop-in replacement for games that need more performance and features than what upstream Hanabi provides.
 
