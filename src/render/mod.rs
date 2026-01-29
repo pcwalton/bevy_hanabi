@@ -5406,7 +5406,7 @@ pub struct QueueEffectsReadOnlyParams<'w, 's> {
     marker: PhantomData<&'s usize>,
 }
 
-fn emit_sorted_draw<T, F>(
+fn emit_sorted_draw<T, MPI, EATP>(
     views: &Query<(&RenderVisibleEntities, &ExtractedView, &Msaa)>,
     render_phases: &mut ResMut<ViewSortedRenderPhases<T>>,
     view_entities: &mut FixedBitSet,
@@ -5416,11 +5416,13 @@ fn emit_sorted_draw<T, F>(
     mut specialized_render_pipelines: Mut<SpecializedRenderPipelines<ParticlesRenderPipeline>>,
     render_meshes: &RenderAssets<RenderMesh>,
     pipeline_cache: &PipelineCache,
-    make_phase_item: F,
+    make_phase_item: MPI,
+    effect_applies_to_phase: EATP,
     #[cfg(all(feature = "2d", feature = "3d"))] pipeline_mode: PipelineMode,
 ) where
     T: SortedPhaseItem,
-    F: Fn(CachedRenderPipelineId, (Entity, MainEntity), &EffectDrawBatch, &ExtractedView) -> T,
+    MPI: Fn(CachedRenderPipelineId, (Entity, MainEntity), &EffectDrawBatch, &ExtractedView) -> T,
+    EATP: Fn(LayoutFlags) -> bool,
 {
     trace!("emit_sorted_draw() {} views", views.iter().len());
 
@@ -5471,18 +5473,15 @@ fn emit_sorted_draw<T, F>(
             };
 
             trace!(
-                "-> EffectBach: buffer_index={} spawner_base={} layout_flags={:?}",
+                "-> EffectBatch: buffer_index={} spawner_base={} layout_flags={:?}",
                 effect_instance.buffer_index,
                 effect_instance.spawner_base,
                 effect_instance.layout_flags,
             );
 
-            // AlphaMask is a binned draw, so no sorted draw can possibly use it
-            if effect_instance
-                .layout_flags
-                .intersects(LayoutFlags::USE_ALPHA_MASK | LayoutFlags::OPAQUE)
-            {
-                trace!("Non-transparent batch. Skipped.");
+            // Make sure we're supposed to render the effect batch in this
+            // phase.
+            if !effect_applies_to_phase(effect_instance.layout_flags) {
                 continue;
             }
 
@@ -5890,6 +5889,17 @@ pub(crate) fn queue_effects(
                     extra_index: PhaseItemExtraIndex::None,
                     indexed: true, // ???
                 },
+                |layout_flags| {
+                    // AlphaMask is a binned draw, so no sorted draw can
+                    // possibly use it.
+                    if layout_flags.intersects(LayoutFlags::USE_ALPHA_MASK | LayoutFlags::OPAQUE) {
+                        trace!("Non-transparent batch. Skipped.");
+                        return false;
+                    }
+                    // FIXME: Should we do something with transmissive here in
+                    // the 2D case?
+                    true
+                },
                 #[cfg(feature = "3d")]
                 PipelineMode::Camera2d,
             );
@@ -5933,6 +5943,20 @@ pub(crate) fn queue_effects(
                     extra_index: PhaseItemExtraIndex::None,
                     indexed: true, // FIXME: This depends on the mesh.
                 },
+                |layout_flags| {
+                    // AlphaMask is a binned draw, so no sorted draw can
+                    // possibly use it.
+                    if layout_flags.intersects(LayoutFlags::USE_ALPHA_MASK | LayoutFlags::OPAQUE) {
+                        trace!("Non-transparent batch. Skipped.");
+                        return false;
+                    }
+                    // Only process non-transmissive batches here.
+                    if layout_flags.contains(LayoutFlags::TRANSMISSIVE) {
+                        trace!("Transmissive batch. Skipped.");
+                        return false;
+                    }
+                    true
+                },
                 #[cfg(feature = "2d")]
                 PipelineMode::Camera3d,
             );
@@ -5970,6 +5994,20 @@ pub(crate) fn queue_effects(
                     batch_range: 0..1,
                     extra_index: PhaseItemExtraIndex::None,
                     indexed: true, // FIXME: This depends on the mesh.
+                },
+                |layout_flags| {
+                    // AlphaMask is a binned draw, so no sorted draw can
+                    // possibly use it.
+                    if layout_flags.intersects(LayoutFlags::USE_ALPHA_MASK | LayoutFlags::OPAQUE) {
+                        trace!("Non-transparent batch. Skipped.");
+                        return false;
+                    }
+                    // Only process transmissive batches here.
+                    if !layout_flags.contains(LayoutFlags::TRANSMISSIVE) {
+                        trace!("Non-transmissive batch. Skipped.");
+                        return false;
+                    }
+                    true
                 },
                 #[cfg(feature = "2d")]
                 PipelineMode::Camera3d,
