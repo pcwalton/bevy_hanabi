@@ -7069,6 +7069,7 @@ fn create_particle_buffer_bind_group(
         RenderViewType::Pbr | RenderViewType::Transmissive
     ) {
         if let Ok((_, Some(view_environment_maps), _)) = q_pbr_views.get(view_entity) {
+            #[cfg(feature = "bevy_backports")]
             for &cubemap_id in &view_environment_maps.binding_index_to_textures {
                 add_cubemap_texture_view(
                     &mut diffuse_texture_views,
@@ -7088,13 +7089,14 @@ fn create_particle_buffer_bind_group(
         }
 
         if diffuse_texture_views.is_empty() {
-            diffuse_texture_views.push(&fallback_images.cube.texture_view);
+            diffuse_texture_views.push(&*fallback_images.cube.texture_view);
         }
         if specular_texture_views.is_empty() {
-            specular_texture_views.push(&fallback_images.cube.texture_view);
+            specular_texture_views.push(&*fallback_images.cube.texture_view);
         }
 
         if let Ok((_, _, Some(view_irradiance_volumes))) = q_pbr_views.get(view_entity) {
+            #[cfg(feature = "bevy_backports")]
             for &cubemap_id in &view_irradiance_volumes.binding_index_to_textures {
                 add_cubemap_texture_view(
                     &mut irradiance_volume_texture_views,
@@ -7107,7 +7109,7 @@ fn create_particle_buffer_bind_group(
         }
 
         if irradiance_volume_texture_views.is_empty() {
-            irradiance_volume_texture_views.push(&fallback_images.d3.texture_view);
+            irradiance_volume_texture_views.push(&*fallback_images.d3.texture_view);
         }
 
         entries.extend([

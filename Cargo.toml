@@ -51,6 +51,11 @@ trace = []
 # This is a testing-only feature, which has no effect on the build.
 gpu_tests = []
 
+# Some features (PBR environment map support, in particular) required Bevy
+# patches that didn't make the 0.18 cutoff. If you've backported these patches,
+# enable this feature.
+bevy_backports = []
+
 [dependencies]
 bytemuck = { version = "1.5", features = ["derive", "must_cast"] }
 fixedbitset = "0.5"
