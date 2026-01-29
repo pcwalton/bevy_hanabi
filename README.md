@@ -6,7 +6,7 @@ Hanabi is a capable system, but performance and other limitations prevent its us
 
 * *Batching*: Hanabi-Batched batches together many instances of the same effect, dramatically improving performance with many particle systems.
 
-* *Additional performance improvements*: Hanabi-Batched features other, more localized, optimizations. For example, instead of using insertion sort for ribbon sorting, it uses GPU mergesort, making ribbons usable in many more scenarios.
+* *Additional performance improvements*: Hanabi-Batched features other, more localized, optimizations. For example, instead of using sequential insertion sort for ribbon sorting, it uses parallel mergesort, making ribbons usable in many more scenarios.
 
 * *More expression features*: More functionality is available in expressions, such as [`select`](https://www.w3.org/TR/WGSL/#select-builtin) and quaternion functions.
 
