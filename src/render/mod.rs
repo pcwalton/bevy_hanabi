@@ -3711,7 +3711,7 @@ pub(crate) fn prepare_effects(
         // there's no randomness anymore, because the uses of the previous frame
         // are "forgotten".
         let mut rng = StdRng::seed_from_u64(extracted_effect.prng_seed as u64);
-        extracted_effect.prng_seed = rng.gen();
+        extracted_effect.prng_seed = rng.random();
 
         let spawner_index = effects_meta.allocate_spawner(
             &extracted_effect.transform,
@@ -3801,7 +3801,7 @@ pub(crate) fn prepare_effects(
                     parent_particle_layout_min_binding_size,
                 )
             else {
-                error!("Failed to find particle sim bind group @1 for min_binding_size={} parent_min_binding_size={:?}", 
+                error!("Failed to find particle sim bind group @1 for min_binding_size={} parent_min_binding_size={:?}",
                 effect_slice.particle_layout.min_binding_size32(), parent_particle_layout_min_binding_size);
                 continue;
             };
