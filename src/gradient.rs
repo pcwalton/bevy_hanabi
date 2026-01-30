@@ -482,7 +482,7 @@ mod tests {
     use std::collections::hash_map::DefaultHasher;
 
     use bevy::reflect::{PartialReflect, ReflectRef, Struct};
-    use rand::{distributions::Standard, prelude::Distribution, rngs::ThreadRng, thread_rng, Rng};
+    use rand::{distr::StandardUniform, prelude::Distribution, rngs::ThreadRng, Rng};
 
     use super::*;
     use crate::test_utils::*;
@@ -688,7 +688,7 @@ mod tests {
     where
         R: Rng + ?Sized,
         T: Lerp + FromReflect + From<S>,
-        Standard: Distribution<S>,
+        StandardUniform: Distribution<S>,
     {
         if count == 0 {
             return vec![];
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn hash() {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         for count in 0..10 {
             let keys: Vec<(f32, f32)> = make_keys::<ThreadRng, f32, f32>(&mut rng, count);
             let mut g1 = Gradient::new().with_keys(keys.into_iter());
@@ -722,7 +722,7 @@ mod tests {
             }
         }
 
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         for count in 0..10 {
             let keys: Vec<(f32, Vec2)> = make_keys::<ThreadRng, Vec2, (f32, f32)>(&mut rng, count);
             let mut g1 = Gradient::new().with_keys(keys.into_iter());
@@ -739,7 +739,7 @@ mod tests {
             }
         }
 
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         for count in 0..10 {
             let keys: Vec<(f32, Vec3)> =
                 make_keys::<ThreadRng, Vec3, (f32, f32, f32)>(&mut rng, count);
@@ -757,7 +757,7 @@ mod tests {
             }
         }
 
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         for count in 0..10 {
             let keys: Vec<(f32, Vec4)> =
                 make_keys::<ThreadRng, Vec4, (f32, f32, f32, f32)>(&mut rng, count);
