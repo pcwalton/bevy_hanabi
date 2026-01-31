@@ -25,6 +25,7 @@ use bevy::{
         ViewEnvironmentMapUniformOffset, ViewLightProbesUniformOffset, ViewLightsUniformOffset,
         ViewShadowBindings, MAX_VIEW_LIGHT_PROBES,
     },
+    platform::collections::hash_map::Entry,
     render::{
         globals::{GlobalsBuffer, GlobalsUniform},
         render_resource::binding_types,
@@ -2353,9 +2354,20 @@ pub(crate) fn extract_effects(
     {
         match extract_effect(main_entity, &q_all_effects, &effects) {
             Some(extracted_effect) => {
-                extracted_effects
-                    .effects
-                    .insert(main_entity, extracted_effect);
+                match extracted_effects.effects.entry(main_entity) {
+                    Entry::Occupied(mut occupied_entry) => {
+                        // Save the old PRNG seed so that we aren't continually
+                        // resetting it.
+                        let old_prng_seed = occupied_entry.get().prng_seed;
+                        *occupied_entry.get_mut() = ExtractedEffect {
+                            prng_seed: old_prng_seed,
+                            ..extracted_effect
+                        };
+                    }
+                    Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(extracted_effect);
+                    }
+                }
                 extracted_effects.dirty = true;
             }
             None => {
