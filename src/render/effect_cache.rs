@@ -577,6 +577,7 @@ pub(crate) struct DispatchBufferIndices {
 struct ParticleBindGroupLayoutKey {
     pub min_binding_size: NonZeroU32,
     pub parent_min_binding_size: Option<NonZeroU32>,
+    pub lut_count: u32,
 }
 
 /// Cache for effect instances sharing common GPU data structures.
@@ -776,6 +777,7 @@ impl EffectCache {
         let key = ParticleBindGroupLayoutKey {
             min_binding_size,
             parent_min_binding_size,
+            lut_count,
         };
         self.particle_bind_group_layout_descriptors
             .entry(key)
@@ -795,10 +797,12 @@ impl EffectCache {
         &self,
         min_binding_size: NonZeroU32,
         parent_min_binding_size: Option<NonZeroU32>,
+        lut_count: u32,
     ) -> Option<&BindGroupLayoutDescriptor> {
         let key = ParticleBindGroupLayoutKey {
             min_binding_size,
             parent_min_binding_size,
+            lut_count,
         };
         self.particle_bind_group_layout_descriptors.get(&key)
     }

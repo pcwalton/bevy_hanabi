@@ -3811,6 +3811,7 @@ pub(crate) fn prepare_effects(
                 .particle_bind_group_layout_descriptor(
                     effect_slice.particle_layout.min_binding_size32(),
                     parent_particle_layout_min_binding_size,
+                    extracted_effect.luts.images.len() as u32,
                 )
             else {
                 error!("Failed to find particle sim bind group @1 for min_binding_size={} parent_min_binding_size={:?}",
@@ -6272,7 +6273,6 @@ pub(crate) fn prepare_bind_groups(
         Res<RenderBatchPipeline>,
         Res<ParticlesUpdatePipeline>,
     ),
-    clusterable_object_meta: Option<Res<GlobalClusterableObjectMeta>>,
     mut render_pipeline: ResMut<ParticlesRenderPipeline>,
     pipeline_cache: Res<PipelineCache>,
 ) {
@@ -7055,7 +7055,7 @@ fn create_particle_buffer_bind_group(
     >,
     render_device: &RenderDevice,
     pipeline_cache: &PipelineCache,
-    gpu_images: &RenderAssets<GpuImage>,
+    _gpu_images: &RenderAssets<GpuImage>,
     fallback_images: &FallbackImage,
 ) -> BindGroup {
     let mut entries = vec![];
@@ -7063,8 +7063,10 @@ fn create_particle_buffer_bind_group(
     // This has to be in the same scope as `entries` for
     // lifetime reasons.
     let (mut diffuse_texture_views, mut specular_texture_views) = (vec![], vec![]);
+    #[allow(unused_mut)]
     let mut environment_map_sampler = None;
     let mut irradiance_volume_texture_views = vec![];
+    #[allow(unused_mut)]
     let mut irradiance_volume_sampler = None;
 
     let bind_group_layout_descriptor = match view_type {
@@ -7080,21 +7082,21 @@ fn create_particle_buffer_bind_group(
         view_type,
         RenderViewType::Pbr | RenderViewType::Transmissive
     ) {
-        if let Ok((_, Some(view_environment_maps), _)) = q_pbr_views.get(view_entity) {
+        if let Ok((_, Some(_view_environment_maps), _)) = q_pbr_views.get(view_entity) {
             #[cfg(feature = "bevy_backports")]
-            for &cubemap_id in &view_environment_maps.binding_index_to_textures {
+            for &cubemap_id in &_view_environment_maps.binding_index_to_textures {
                 add_cubemap_texture_view(
                     &mut diffuse_texture_views,
                     &mut environment_map_sampler,
                     cubemap_id.diffuse,
-                    &gpu_images,
+                    &_gpu_images,
                     &fallback_images,
                 );
                 add_cubemap_texture_view(
                     &mut specular_texture_views,
                     &mut environment_map_sampler,
                     cubemap_id.specular,
-                    &gpu_images,
+                    &_gpu_images,
                     &fallback_images,
                 );
             }
@@ -7107,14 +7109,14 @@ fn create_particle_buffer_bind_group(
             specular_texture_views.push(&*fallback_images.cube.texture_view);
         }
 
-        if let Ok((_, _, Some(view_irradiance_volumes))) = q_pbr_views.get(view_entity) {
+        if let Ok((_, _, Some(_view_irradiance_volumes))) = q_pbr_views.get(view_entity) {
             #[cfg(feature = "bevy_backports")]
-            for &cubemap_id in &view_irradiance_volumes.binding_index_to_textures {
+            for &cubemap_id in &_view_irradiance_volumes.binding_index_to_textures {
                 add_cubemap_texture_view(
                     &mut irradiance_volume_texture_views,
                     &mut irradiance_volume_sampler,
                     cubemap_id,
-                    &gpu_images,
+                    &_gpu_images,
                     &fallback_images,
                 );
             }
