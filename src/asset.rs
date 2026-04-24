@@ -1008,6 +1008,8 @@ mod tests {
         };
         assert_eq!(blend_state, AlphaMode::Multiply.into());
 
-        assert_eq!(BlendState::ALPHA_BLENDING, AlphaMode::Mask(0.5).into());
+        let mut module = Module::default();
+        let half = module.lit(0.5f32);
+        assert_eq!(BlendState::ALPHA_BLENDING, AlphaMode::Mask(half).into());
     }
 }

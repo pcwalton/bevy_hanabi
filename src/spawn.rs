@@ -1346,8 +1346,6 @@ mod test {
                     assert_eq!(effect_spawner.cycle_time, 0.);
                     assert_eq!(effect_spawner.completed_cycle_count, 1);
 
-                    assert!(spawn_count.is_some());
-                    let spawn_count = spawn_count.unwrap();
                     assert_eq!(**spawn_count, 32);
 
                     assert_eq!(actual_spawner, test_case.asset_spawner);
@@ -1359,7 +1357,7 @@ mod test {
             } else {
                 // Always-simulated effect (SimulationCondition::Always)
 
-                let (entity, particle_effect, effect_spawners, spawn_counts) = world
+                let (entity, particle_effect, effect_spawners, spawn_count) = world
                     .query::<(Entity, &ParticleEffect, Option<&EffectSpawner>, &SpawnCount)>()
                     .iter(world)
                     .next()
@@ -1377,8 +1375,6 @@ mod test {
                 assert_eq!(effect_spawner.cycle_time, 0.);
                 assert_eq!(effect_spawner.completed_cycle_count, 1);
 
-                assert!(spawn_counts.is_some());
-                let spawn_count = spawn_counts.unwrap();
                 assert_eq!(**spawn_count, 32);
 
                 assert_eq!(actual_spawner, test_case.asset_spawner);
