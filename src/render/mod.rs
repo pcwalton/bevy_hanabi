@@ -1682,6 +1682,7 @@ pub(crate) struct ParticleRenderPipelineKey {
     msaa_samples: u32,
     /// Is the camera using an HDR render target?
     hdr: bool,
+    view_has_environment_maps: bool,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
@@ -1740,6 +1741,7 @@ impl Default for ParticleRenderPipelineKey {
             pipeline_mode: PipelineMode::Camera3d,
             msaa_samples: Msaa::default().samples(),
             hdr: false,
+            view_has_environment_maps: false,
         }
     }
 }
@@ -1838,6 +1840,10 @@ impl SpecializedRenderPipeline for ParticlesRenderPipeline {
         // Key: RAW_POSITIONS
         if key.emits_raw_positions {
             shader_defs.push("RAW_POSITIONS".into());
+        }
+
+        if key.view_has_environment_maps {
+            shader_defs.push("ENVIRONMENT_MAP".into());
         }
 
         #[cfg(feature = "2d")]
@@ -5420,7 +5426,12 @@ pub struct QueueEffectsReadOnlyParams<'w, 's> {
 }
 
 fn emit_sorted_draw<T, MPI, EATP>(
-    views: &Query<(&RenderVisibleEntities, &ExtractedView, &Msaa)>,
+    views: &Query<(
+        &RenderVisibleEntities,
+        &ExtractedView,
+        &Msaa,
+        Has<RenderViewLightProbes<EnvironmentMapLight>>,
+    )>,
     render_phases: &mut ResMut<ViewSortedRenderPhases<T>>,
     view_entities: &mut FixedBitSet,
     sorted_effect_batches: &SortedEffects,
@@ -5439,7 +5450,7 @@ fn emit_sorted_draw<T, MPI, EATP>(
 {
     trace!("emit_sorted_draw() {} views", views.iter().len());
 
-    for (visible_entities, view, msaa) in views.iter() {
+    for (visible_entities, view, msaa, view_has_environment_maps) in views.iter() {
         trace!(
             "Process new sorted view with {} visible particle effect entities",
             visible_entities.len::<CompiledParticleEffect>()
@@ -5588,6 +5599,7 @@ fn emit_sorted_draw<T, MPI, EATP>(
                     pipeline_mode,
                     msaa_samples: msaa.samples(),
                     hdr: view.hdr,
+                    view_has_environment_maps,
                 },
             );
             #[cfg(feature = "trace")]
@@ -5614,7 +5626,12 @@ fn emit_sorted_draw<T, MPI, EATP>(
 
 #[cfg(feature = "3d")]
 fn emit_binned_draw<T, F, G>(
-    views: &Query<(&RenderVisibleEntities, &ExtractedView, &Msaa)>,
+    views: &Query<(
+        &RenderVisibleEntities,
+        &ExtractedView,
+        &Msaa,
+        Has<RenderViewLightProbes<EnvironmentMapLight>>,
+    )>,
     render_phases: &mut ResMut<ViewBinnedRenderPhases<T>>,
     view_entities: &mut FixedBitSet,
     sorted_effect_batches: &SortedEffects,
@@ -5637,7 +5654,7 @@ fn emit_binned_draw<T, F, G>(
 
     trace!("emit_binned_draw() {} views", views.iter().len());
 
-    for (visible_entities, view, msaa) in views.iter() {
+    for (visible_entities, view, msaa, view_has_environment_maps) in views.iter() {
         trace!("Process new binned view (alpha_mask={:?})", alpha_mask);
 
         let Some(render_phase) = render_phases.get_mut(&view.retained_view_entity) else {
@@ -5781,6 +5798,7 @@ fn emit_binned_draw<T, F, G>(
                     pipeline_mode,
                     msaa_samples: msaa.samples(),
                     hdr: view.hdr,
+                    view_has_environment_maps,
                 },
             );
             #[cfg(feature = "trace")]
@@ -5809,7 +5827,12 @@ fn emit_binned_draw<T, F, G>(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn queue_effects(
-    views: Query<(&RenderVisibleEntities, &ExtractedView, &Msaa)>,
+    views: Query<(
+        &RenderVisibleEntities,
+        &ExtractedView,
+        &Msaa,
+        Has<RenderViewLightProbes<EnvironmentMapLight>>,
+    )>,
     effects_meta: Res<EffectsMeta>,
     mut render_pipeline: ResMut<ParticlesRenderPipeline>,
     mut specialized_render_pipelines: ResMut<SpecializedRenderPipelines<ParticlesRenderPipeline>>,
