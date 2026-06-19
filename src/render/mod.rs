@@ -2180,14 +2180,17 @@ pub(crate) fn extract_effects(
     q_changed_effects: Extract<
         Query<
             Entity,
-            Or<(
-                Changed<InheritedVisibility>,
-                Changed<ViewVisibility>,
-                Changed<SpawnCount>,
-                Changed<CompiledParticleEffect>,
-                Changed<EffectProperties>,
-                Changed<GlobalTransform>,
-            )>,
+            (
+                With<CompiledParticleEffect>,
+                Or<(
+                    Changed<InheritedVisibility>,
+                    Changed<ViewVisibility>,
+                    Changed<SpawnCount>,
+                    Changed<CompiledParticleEffect>,
+                    Changed<EffectProperties>,
+                    Changed<GlobalTransform>,
+                )>,
+            ),
         >,
     >,
     q_all_effects: Extract<Query<EffectExtractionQuery>>,
